@@ -41,6 +41,9 @@ namespace DeltaVis
 		private Dictionary<int, int> _cachedVertexToCluster;
 		private Dictionary<int, Color> _cachedClusterColors;
 
+		// lessonId → blockId, set when org data is loaded
+		private Dictionary<int, int> _blockGroups;
+
 		// Phase 2 cancellation — discards stale layout tasks on resize
 		private CancellationTokenSource _layoutCts;
 
@@ -96,7 +99,18 @@ namespace DeltaVis
 		{
 			_lessonTooltips = tooltips;
 			BuildModuleColors(tooltips);
-			Invalidate();
+
+			// Rebuild block groups and invalidate the cluster cache so DetectClusters
+			// re-runs with the new block information.
+			_blockGroups = tooltips?.Count > 0
+				? tooltips.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.BlockId)
+				: null;
+			_clusterCacheKey = null;
+
+			if (graphData != null && graphData.Count > 0)
+				DetectAndLayoutAsync();
+			else
+				Invalidate();
 		}
 
 		private void BuildModuleColors(Dictionary<int, LessonInfo> tooltips)
@@ -136,6 +150,8 @@ namespace DeltaVis
 			Invalidate();
 
 			// Phase 1 — only when graphData reference has changed
+			var capturedBlockGroups = _blockGroups;
+
 			if (!ReferenceEquals(_clusterCacheKey, capturedGraph)) {
 				try {
 					var (newClusters, newVertexToCluster, newClusterColors) = await Task.Run(() => {
@@ -144,7 +160,7 @@ namespace DeltaVis
 						var localClusters = new List<List<int>>();
 						var localVertexToCluster = new Dictionary<int, int>();
 
-						ClusterDetector.DetectClusters(capturedGraph, localClusters, localVertexToCluster);
+						ClusterDetector.DetectClusters(capturedGraph, localClusters, localVertexToCluster, capturedBlockGroups);
 						colorGen.GenerateClusterColors(localClusters);
 						var localColors = colorGen.GetAllClusterColors();
 
@@ -157,7 +173,7 @@ namespace DeltaVis
 					_cachedVertexToCluster = newVertexToCluster;
 					_cachedClusterColors = newClusterColors;
 				}
-				catch (Exception ex) when (!(ex is OperationCanceledException)) {
+				catch (Exception ex) when (ex is not OperationCanceledException) {
 					_isBusy = false;
 					Invalidate();
 					return;
@@ -195,6 +211,7 @@ namespace DeltaVis
 			var capturedClusters = _cachedClusters;
 			var capturedVertexToCluster = _cachedVertexToCluster;
 			var capturedColors = _cachedClusterColors;
+			var capturedBlockGroups = _blockGroups;
 			var capturedWidth = Width;
 			var capturedHeight = Height;
 			var capturedRadius = vertexRadius;
@@ -213,7 +230,8 @@ namespace DeltaVis
 						localPositions,
 						capturedRadius,
 						capturedWidth,
-						capturedHeight);
+						capturedHeight,
+						capturedBlockGroups);
 
 					token.ThrowIfCancellationRequested();
 					return localPositions;
@@ -238,8 +256,8 @@ namespace DeltaVis
 			base.OnPaint(e);
 
 			if (_isBusy) {
-				using (var font = new Font("Arial", 12))
-					e.Graphics.DrawString("Calculating layout\u2026", font, Brushes.Gray, 20, 20);
+				using var font = new Font("Arial", 12);
+				e.Graphics.DrawString("Calculating layout\u2026", font, Brushes.Gray, 20, 20);
 				return;
 			}
 

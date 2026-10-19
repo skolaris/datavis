@@ -13,8 +13,14 @@ namespace DeltaVis
 		/// <summary>
 		/// Detect clusters in the graph using greedy community detection.
 		/// Returns clusters list and vertex-to-cluster mapping.
+		/// When <paramref name="blockGroups"/> is provided, lessons sharing a block are
+		/// kept together as a priority sub-cluster within the same community.
 		/// </summary>
-		public static void DetectClusters(Dictionary<int, HashSet<int>> graphData, List<List<int>> clusters, Dictionary<int, int> vertexToCluster)
+		public static void DetectClusters(
+			Dictionary<int, HashSet<int>> graphData,
+			List<List<int>> clusters,
+			Dictionary<int, int> vertexToCluster,
+			Dictionary<int, int> blockGroups = null)
 		{
 			clusters.Clear();
 			vertexToCluster.Clear();
@@ -59,7 +65,7 @@ namespace DeltaVis
 				var n = communityList.Count;
 
 				// Pre-allocate one slot per (i,j) pair in row-major order so that
-				// each Parallel.For thread writes to a unique index — no locks needed.
+				// each Parallel.For thread writes to a unique index â€” no locks needed.
 				// flatIdx(i,j) = i*(n-1) - i*(i-1)/2 + (j-i-1)
 				var totalPairs = n * (n - 1) / 2;
 				var pairScores = new float[totalPairs];
@@ -104,6 +110,46 @@ namespace DeltaVis
 				foreach (var vertex in communities[bestCom2])
 					vertexToCommunity[vertex] = bestCom1;
 				communities.Remove(bestCom2);
+			}
+
+			// Force-merge communities that share a block so all lessons in a block
+			// end up in the same community regardless of the greedy result.
+			if (blockGroups != null && blockGroups.Count > 0) {
+				var blockToVertices = new Dictionary<int, List<int>>();
+				foreach (var kvp in blockGroups) {
+					if (!vertexToCommunity.ContainsKey(kvp.Key))
+						continue;
+					if (!blockToVertices.TryGetValue(kvp.Value, out var list)) {
+						list = [];
+						blockToVertices[kvp.Value] = list;
+					}
+					list.Add(kvp.Key);
+				}
+
+				foreach (var blockVertices in blockToVertices.Values) {
+					if (blockVertices.Count < 2)
+						continue;
+
+					var targetCom = vertexToCommunity[blockVertices[0]];
+					for (var bi = 1; bi < blockVertices.Count; bi++) {
+						var srcCom = vertexToCommunity[blockVertices[bi]];
+						if (srcCom == targetCom)
+							continue;
+
+						// Follow the chain in case either community was merged away
+						if (!communities.ContainsKey(targetCom))
+							targetCom = vertexToCommunity[blockVertices[0]];
+						if (!communities.ContainsKey(srcCom))
+							srcCom = vertexToCommunity[blockVertices[bi]];
+						if (srcCom == targetCom)
+							continue;
+
+						communities[targetCom].UnionWith(communities[srcCom]);
+						foreach (var v in communities[srcCom])
+							vertexToCommunity[v] = targetCom;
+						communities.Remove(srcCom);
+					}
+				}
 			}
 
 			// Convert to clusters format

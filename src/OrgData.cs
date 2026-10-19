@@ -124,6 +124,7 @@ namespace DeltaVis
 	public class LessonInfo
 	{
 		public int LessonId { get; set; }
+		public int BlockId { get; set; }
 		public string Lecturers { get; set; }
 		public string Module { get; set; }
 		public string TeachingGroup { get; set; }

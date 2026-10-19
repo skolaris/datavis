@@ -159,6 +159,15 @@ namespace DeltaVis
 						connectedNodes.Add(kvp.Key);
 			}
 
+			// Lessons sharing the same block as the selected vertex
+			var blockMates = new HashSet<int>();
+			if (selectedVertexId >= 0 && lessonInfo != null &&
+				lessonInfo.TryGetValue(selectedVertexId, out var selInfo) && selInfo.BlockId != 0) {
+				foreach (var kvp in lessonInfo)
+					if (kvp.Key != selectedVertexId && kvp.Value.BlockId == selInfo.BlockId)
+						blockMates.Add(kvp.Key);
+			}
+
 			// Draw edges to/from selected vertex in light grey
 			if (showEdges && connectedNodes.Count > 0 && vertexPositions.TryGetValue(selectedVertexId, out var selPos)) {
 				var selCenter = new PointF(selPos.X + vertexRadius, selPos.Y + vertexRadius);
@@ -179,6 +188,7 @@ namespace DeltaVis
 
 					var isSelected = selectedVertexId == vertexId;
 					var isConnected = showEdges && connectedNodes.Contains(vertexId);
+					var isBlockMate = blockMates.Contains(vertexId);
 
 					// Get the cluster color for this vertex
 					var clusterId = vertexToCluster.TryGetValue(vertexId, out var cId) ? cId : 0;
@@ -191,6 +201,11 @@ namespace DeltaVis
 						// Selected vertex: drawn bigger and black further below
 						fillBrush = new SolidBrush(clusterBaseColor);
 						outlinePen = new Pen(Color.Black, 1f);
+					}
+					else if (isBlockMate) {
+						// Same-block vertex: light green
+						fillBrush = new SolidBrush(Color.FromArgb(180, 230, 180));
+						outlinePen = new Pen(Color.SeaGreen, 2f);
 					}
 					else if (isConnected) {
 						// Neighbour vertex: light grey tint

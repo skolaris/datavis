@@ -39,7 +39,7 @@ namespace DeltaVis
 			var result = new Dictionary<int, LessonInfo>(org.Lessons.Count);
 
 			foreach (var lesson in org.Lessons) {
-				var info = new LessonInfo { LessonId = lesson.Id };
+				var info = new LessonInfo { LessonId = lesson.Id, BlockId = lesson.BlockId };
 
 				// Resolve lecturers
 				var lecturerCodes = lesson.LessonLecturers

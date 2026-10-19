@@ -15,6 +15,8 @@ namespace DeltaVis
 
 		/// <summary>
 		/// Calculate vertex positions based on clusters and graph connectivity.
+		/// When <paramref name="blockGroups"/> is provided, vertices sharing a block are
+		/// placed in consecutive Fibonacci disc slots so they appear physically adjacent.
 		/// </summary>
 		public void CalculateLayout(
 			Dictionary<int, HashSet<int>> graphData,
@@ -23,7 +25,8 @@ namespace DeltaVis
 			Dictionary<int, PointF> vertexPositions,
 			float vertexRadius,
 			int panelWidth,
-			int panelHeight)
+			int panelHeight,
+			Dictionary<int, int> blockGroups = null)
 		{
 			vertexPositions.Clear();
 
@@ -139,33 +142,29 @@ namespace DeltaVis
 				var clusterRadius = clusterRadii[clusterIdx];
 
 				// Compute per-vertex external connection directions
-				List<(int vertex, float angle, float externalStrength)> positionedVertices = [];
+				var vertexAngle = new Dictionary<int, float>();
+				var vertexStrength = new Dictionary<int, float>();
 
 				foreach (var vertexId in cluster) {
-					var totalXDirection = 0f;
-					var totalYDirection = 0f;
-					var totalExternalEdges = 0f;
+					var totalX = 0f;
+					var totalY = 0f;
+					var totalEdges = 0f;
 
 					if (vertexInterClusterEdges[vertexId].Count > 0) {
 						foreach (var kvp in vertexInterClusterEdges[vertexId]) {
-							var targetCluster = kvp.Key;
 							var edgeCount = kvp.Value;
-
-							var targetClusterAngle = (float)targetCluster / clusterCount * 2 * (float)Math.PI;
-							totalXDirection += edgeCount * (float)Math.Cos(targetClusterAngle);
-							totalYDirection += edgeCount * (float)Math.Sin(targetClusterAngle);
-							totalExternalEdges += edgeCount;
+							var targetAngle = (float)kvp.Key / clusterCount * 2 * (float)Math.PI;
+							totalX += edgeCount * (float)Math.Cos(targetAngle);
+							totalY += edgeCount * (float)Math.Sin(targetAngle);
+							totalEdges += edgeCount;
 						}
 					}
 
-					var directionAngle = totalExternalEdges > 0
-						? (float)Math.Atan2(totalYDirection, totalXDirection)
-						: 0f;
-
-					positionedVertices.Add((vertexId, directionAngle, totalExternalEdges));
+					vertexAngle[vertexId] = totalEdges > 0 ? (float)Math.Atan2(totalY, totalX) : 0f;
+					vertexStrength[vertexId] = totalEdges;
 				}
 
-				// Generate Fibonacci (sunflower) disc positions — purely uniform, no per-vertex distortion
+				// Generate all Fibonacci disc positions
 				var discPositions = new List<(float x, float y, float r)>(verticesInCluster);
 				for (var k = 0; k < verticesInCluster; k++) {
 					var r = clusterRadius * (float)Math.Sqrt((k + 0.5f) / verticesInCluster);
@@ -173,30 +172,100 @@ namespace DeltaVis
 					discPositions.Add((r * (float)Math.Cos(a), r * (float)Math.Sin(a), r));
 				}
 
-				// Inner positions → vertices with no external connections
-				// Outer positions → vertices with external connections, matched by direction angle
-				var sortedByRadius = discPositions.OrderBy(p => p.r).ToList();
-				var innerCount = positionedVertices.Count(v => v.externalStrength == 0);
+				// Assign disc slots: if block data is available, reserve spatially-contiguous
+				// slots for each multi-vertex block before assigning the remaining vertices.
+				var slotTaken = new bool[verticesInCluster];
+				var assignment = new Dictionary<int, int>(); // vertexId -> disc slot index
 
-				var innerPositions = sortedByRadius.Take(innerCount).ToList();
-				var outerPositions = sortedByRadius.Skip(innerCount)
-					.OrderBy(p => (float)Math.Atan2(p.y, p.x)).ToList();
+				if (blockGroups != null) {
+					// Group cluster vertices by block, keeping only blocks with ≥2 members
+					var blockMembers = new Dictionary<int, List<int>>();
+					foreach (var v in cluster) {
+						if (!blockGroups.TryGetValue(v, out var bid))
+							continue;
+						if (!blockMembers.TryGetValue(bid, out var list)) {
+							list = [];
+							blockMembers[bid] = list;
+						}
+						list.Add(v);
+					}
 
-				var noExternalVerts = positionedVertices.Where(v => v.externalStrength == 0).ToList();
-				var externalVerts = positionedVertices
-					.Where(v => v.externalStrength > 0)
-					.OrderBy(v => v.angle).ToList();
+					foreach (var (bid, members) in blockMembers) {
+						if (members.Count < 2)
+							continue;
 
-				for (var i = 0; i < noExternalVerts.Count; i++) {
-					var pos = innerPositions[i];
-					vertexPositions[noExternalVerts[i].vertex] = new PointF(
-						clusterCenterX + pos.x - vertexRadius,
-						clusterCenterY + pos.y - vertexRadius);
+						// Choose anchor direction as the average external-connection angle of the group
+						var ax = members.Average(v => (double)Math.Cos(vertexAngle[v]));
+						var ay = members.Average(v => (double)Math.Sin(vertexAngle[v]));
+						var groupAngle = (float)Math.Atan2(ay, ax);
+
+						// Pick the disc position closest in angular direction to groupAngle as anchor
+						var anchorSlot = -1;
+						var bestDot = float.MinValue;
+						for (var k = 0; k < verticesInCluster; k++) {
+							if (slotTaken[k]) continue;
+							var slotAngle = (float)Math.Atan2(discPositions[k].y, discPositions[k].x);
+							var dot = (float)(Math.Cos(groupAngle) * Math.Cos(slotAngle) + Math.Sin(groupAngle) * Math.Sin(slotAngle));
+							if (dot > bestDot) { bestDot = dot; anchorSlot = k; }
+						}
+
+						if (anchorSlot < 0) continue;
+
+						// Find the nearest 'members.Count' free slots to the anchor position
+						var anchorX = discPositions[anchorSlot].x;
+						var anchorY = discPositions[anchorSlot].y;
+						var nearest = Enumerable.Range(0, verticesInCluster)
+							.Where(k => !slotTaken[k])
+							.OrderBy(k => {
+								var dx = discPositions[k].x - anchorX;
+								var dy = discPositions[k].y - anchorY;
+								return dx * dx + dy * dy;
+							})
+							.Take(members.Count)
+							.ToList();
+
+						// Assign members to those slots ordered by external angle
+						var sortedMembers = members.OrderBy(v => vertexAngle[v]).ToList();
+						var sortedSlots   = nearest.OrderBy(k => (float)Math.Atan2(discPositions[k].y, discPositions[k].x)).ToList();
+						for (var i = 0; i < sortedMembers.Count; i++) {
+							assignment[sortedMembers[i]] = sortedSlots[i];
+							slotTaken[sortedSlots[i]] = true;
+						}
+					}
 				}
 
-				for (var i = 0; i < externalVerts.Count; i++) {
-					var pos = outerPositions[i];
-					vertexPositions[externalVerts[i].vertex] = new PointF(
+				// Assign remaining vertices (not yet placed) to the free slots.
+				// Vertices with external connections get outer (higher-radius) slots matched by angle;
+				// vertices without get inner slots.
+				var freeSlots = Enumerable.Range(0, verticesInCluster).Where(k => !slotTaken[k]).ToList();
+				var unassigned = cluster.Where(v => !assignment.ContainsKey(v)).ToList();
+
+				var innerFree = freeSlots.OrderBy(k => discPositions[k].r).ToList();
+				var outerFree = freeSlots.OrderByDescending(k => discPositions[k].r)
+					.OrderBy(k => (float)Math.Atan2(discPositions[k].y, discPositions[k].x))
+					.ToList();
+
+				var noExternal = unassigned.Where(v => vertexStrength[v] == 0).ToList();
+				var hasExternal = unassigned.Where(v => vertexStrength[v] > 0)
+					.OrderBy(v => vertexAngle[v]).ToList();
+
+				// Distribute free slots between the two groups
+				var innerNeeded = noExternal.Count;
+				var innerSlots = innerFree.Take(innerNeeded).ToList();
+				var outerSlots = innerFree.Skip(innerNeeded)
+					.OrderBy(k => (float)Math.Atan2(discPositions[k].y, discPositions[k].x))
+					.ToList();
+
+				for (var i = 0; i < noExternal.Count; i++)
+					assignment[noExternal[i]] = innerSlots[i];
+
+				for (var i = 0; i < hasExternal.Count && i < outerSlots.Count; i++)
+					assignment[hasExternal[i]] = outerSlots[i];
+
+				// Write final positions
+				foreach (var (vertexId, slot) in assignment) {
+					var pos = discPositions[slot];
+					vertexPositions[vertexId] = new PointF(
 						clusterCenterX + pos.x - vertexRadius,
 						clusterCenterY + pos.y - vertexRadius);
 				}
