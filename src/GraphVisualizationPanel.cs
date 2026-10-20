@@ -236,13 +236,10 @@ namespace DeltaVis
 			try {
 				newPositions = await Task.Run(() => {
 					var layout = new GraphLayoutCalculator();
-					var localPositions = new Dictionary<int, PointF>();
-
-					layout.CalculateLayout(
+					var localPositions = layout.CalculateLayout(
 						capturedGraph,
 						capturedClusters,
 						capturedVertexToCluster,
-						localPositions,
 						capturedRadius,
 						capturedWidth,
 						capturedHeight,
@@ -327,7 +324,10 @@ namespace DeltaVis
 
 				if (rect.Contains(e.Location)) {
 					selectedVertexId = vertexId;
-					VertexSelected?.Invoke(this, new VertexSelectedEventArgs(vertexId));
+					var representedIds = _mergedToOriginals != null && _mergedToOriginals.TryGetValue(vertexId, out var merged)
+						? merged
+						: [vertexId];
+					VertexSelected?.Invoke(this, new VertexSelectedEventArgs(vertexId, representedIds));
 					Invalidate();
 					return;
 				}

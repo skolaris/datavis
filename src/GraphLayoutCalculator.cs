@@ -16,7 +16,7 @@ namespace DeltaVis
 		/// When <paramref name="blockGroups"/> is provided, vertices sharing a block are
 		/// placed in consecutive Fibonacci disc slots so they appear physically adjacent.
 		/// </summary>
-		public void CalculateLayout(
+		public Dictionary<int, PointF> CalculateLayout(
 			Dictionary<int, HashSet<int>> graphData,
 			List<List<int>> clusters,
 			Dictionary<int, int> vertexToCluster,
@@ -26,27 +26,23 @@ namespace DeltaVis
 			Dictionary<int, int> blockGroups = null,
 			Dictionary<int, int> nodeWeights = null)
 		{
+			_vertexPositions.Clear();
+			if (graphData == null || graphData.Count == 0)
+				return _vertexPositions;
+
 			_clusters = clusters;
 			_vertexRadius = vertexRadius;
 			_nodeWeights = nodeWeights;
-			_vertexPositions.Clear();
-
-			if (graphData == null || graphData.Count == 0)
-				return;
 
 			var centerX = panelWidth / 2f;
 			var centerY = panelHeight / 2f;
-
 			var maxRadiusX = Math.Max(panelWidth / 2f - Padding - vertexRadius, vertexRadius + 10);
 			var maxRadiusY = Math.Max(panelHeight / 2f - Padding - vertexRadius, vertexRadius + 10);
-
 			var interClusterEdges = BuildInterClusterEdges(graphData, vertexToCluster);
-
 			ComputeClusterCenters(centerX, centerY, maxRadiusX, maxRadiusY,
 				out var clusterRadii, out var clusterCX, out var clusterCY);
 
 			SeparateClusters(clusterCX, clusterCY, clusterRadii, vertexRadius * 2f);
-
 			ScaleAndCenterLayout(clusterCX, clusterCY, clusterRadii, centerX, centerY,
 				panelWidth - 2 * Padding, panelHeight - 2 * Padding);
 
@@ -55,6 +51,7 @@ namespace DeltaVis
 					interClusterEdges, blockGroups);
 			}
 			SeparateOverlappingVertices();
+			return _vertexPositions;
 		}
 
 		/// <summary>
@@ -72,6 +69,7 @@ namespace DeltaVis
 					var targetCluster = vertexToCluster[target];
 					if (targetCluster == sourceCluster)
 						continue;
+
 					result[vertex].TryGetValue(targetCluster, out var count);
 					result[vertex][targetCluster] = count + 1;
 				}
@@ -97,8 +95,7 @@ namespace DeltaVis
 
 			for (var i = 0; i < n; i++) {
 				var totalArea = _clusters[i].Sum(v => {
-					var w = _nodeWeights != null && _nodeWeights.TryGetValue(v, out var ww) ? ww : 1;
-					var r = _vertexRadius * (float)Math.Sqrt(w);
+					var r = GetWeightedRadius(v);
 					return r * r;
 				});
 				clusterRadii[i] = 2.4f * (float)Math.Sqrt(totalArea / Math.PI);
@@ -124,6 +121,7 @@ namespace DeltaVis
 						var dist = (float)Math.Sqrt(dx * dx + dy * dy);
 						if (dist >= minDist)
 							continue;
+
 						moved = true;
 						if (dist < 0.001f) { dx = 1f; dy = 0f; dist = 1f; }
 						var push = (minDist - dist) * 0.5f / dist;
@@ -160,7 +158,6 @@ namespace DeltaVis
 			var scale = Math.Min(1f, Math.Min(availWidth / (maxX - minX), availHeight / (maxY - minY)));
 			var layoutCX = (minX + maxX) / 2f;
 			var layoutCY = (minY + maxY) / 2f;
-
 			for (var i = 0; i < n; i++) {
 				clusterCX[i] = centerX + (clusterCX[i] - layoutCX) * scale;
 				clusterCY[i] = centerY + (clusterCY[i] - layoutCY) * scale;
@@ -219,10 +216,8 @@ namespace DeltaVis
 			// Assign remaining vertices: isolated → inner slots, externally-connected → outer slots
 			var freeSlots = Enumerable.Range(0, n).Where(k => !slotTaken[k]).ToList();
 			var unassigned = cluster.Where(v => !assignment.ContainsKey(v)).ToList();
-
 			var noExternal = unassigned.Where(v => vertexStrength[v] == 0).ToList();
 			var hasExternal = unassigned.Where(v => vertexStrength[v] > 0).OrderBy(v => vertexAngle[v]).ToList();
-
 			var innerFree = freeSlots.OrderBy(k => disc[k].r).ToList();
 			var innerSlots = innerFree.Take(noExternal.Count).ToList();
 			var outerSlots = innerFree.Skip(noExternal.Count)
@@ -231,6 +226,7 @@ namespace DeltaVis
 
 			for (var i = 0; i < noExternal.Count; i++)
 				assignment[noExternal[i]] = innerSlots[i];
+
 			for (var i = 0; i < hasExternal.Count && i < outerSlots.Count; i++)
 				assignment[hasExternal[i]] = outerSlots[i];
 
@@ -257,6 +253,7 @@ namespace DeltaVis
 			foreach (var v in cluster) {
 				if (!blockGroups.TryGetValue(v, out var bid))
 					continue;
+
 				if (!blockMembers.TryGetValue(bid, out var list)) {
 					list = [];
 					blockMembers[bid] = list;
@@ -269,19 +266,22 @@ namespace DeltaVis
 					continue;
 
 				// Anchor slot: free slot whose direction best matches the group's average angle
-				var ax = members.Average(v => (double)Math.Cos(vertexAngle[v]));
-				var ay = members.Average(v => (double)Math.Sin(vertexAngle[v]));
-				var groupAngle = (float)Math.Atan2(ay, ax);
+				var groupAngle = ComputeAngleFromComponents(
+					members.Average(v => (double)Math.Cos(vertexAngle[v])),
+					members.Average(v => (double)Math.Sin(vertexAngle[v])));
 
 				var anchorSlot = -1;
 				var bestDot = float.MinValue;
 				for (var k = 0; k < n; k++) {
 					if (slotTaken[k])
 						continue;
+
 					var slotAngle = (float)Math.Atan2(disc[k].y, disc[k].x);
-					var dot = (float)(Math.Cos(groupAngle) * Math.Cos(slotAngle)
-									+ Math.Sin(groupAngle) * Math.Sin(slotAngle));
-					if (dot > bestDot) { bestDot = dot; anchorSlot = k; }
+					var dot = AngleDotProduct(groupAngle, slotAngle);
+					if (dot > bestDot) {
+						bestDot = dot;
+						anchorSlot = k;
+					}
 				}
 				if (anchorSlot < 0)
 					continue;
@@ -324,10 +324,8 @@ namespace DeltaVis
 						for (var b = a + 1; b < vlist.Count; b++) {
 							var va = vlist[a];
 							var vb = vlist[b];
-							var wA = _nodeWeights != null && _nodeWeights.TryGetValue(va, out var wwa) ? wwa : 1;
-							var wB = _nodeWeights != null && _nodeWeights.TryGetValue(vb, out var wwb) ? wwb : 1;
-							var rA = wA > 1 ? _vertexRadius * (float)Math.Sqrt(wA) : _vertexRadius;
-							var rB = wB > 1 ? _vertexRadius * (float)Math.Sqrt(wB) : _vertexRadius;
+							var rA = GetWeightedRadius(va);
+							var rB = GetWeightedRadius(vb);
 
 							var posA = _vertexPositions[va];
 							var posB = _vertexPositions[vb];
@@ -350,6 +348,22 @@ namespace DeltaVis
 				}
 			}
 		}
+
+		//gets the actual rendered radius for a vertex, accounting for weight
+		float GetWeightedRadius(int vertexId)
+		{
+			if (_nodeWeights != null && _nodeWeights.TryGetValue(vertexId, out var w) && w > 1)
+				return _vertexRadius * (float)Math.Sqrt(w);
+			return _vertexRadius;
+		}
+
+		//computes an angle from a weighted vector sum of cos/sin components
+		static float ComputeAngleFromComponents(double sumCos, double sumSin)
+			=> (float)Math.Atan2(sumSin, sumCos);
+
+		//dot product of two angles expressed as radians
+		static float AngleDotProduct(float a, float b)
+			=> (float)(Math.Cos(a) * Math.Cos(b) + Math.Sin(a) * Math.Sin(b));
 
 		const float Padding = 30f;
 		List<List<int>> _clusters;

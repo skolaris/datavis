@@ -86,7 +86,9 @@ namespace DeltaVis
 				EnableHeadersVisualStyles = true,
 				ReadOnly = true,
 				RowHeadersVisible = true,
-				RowHeadersWidth = 60
+				RowHeadersWidth = 60,
+				SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+				MultiSelect = true
 			};
 			dataGridView.ColumnHeaderMouseClick += DataGridView_ColumnHeaderMouseClick;
 			dataGridView.RowPostPaint += DataGridView_RowPostPaint;

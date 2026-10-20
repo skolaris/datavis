@@ -241,7 +241,8 @@ namespace DeltaVis
 				}
 
 				if (isSelected) {
-					var selR = r * 1.5f;
+					var isAlreadyLarger = isBlockMate || (w > 1);
+					var selR = isAlreadyLarger ? r : r * 1.5f;
 					var selX = pos.X + r - selR;
 					var selY = pos.Y + r - selR;
 					e.Graphics.FillEllipse(Brushes.Black, selX, selY, selR * 2, selR * 2);
@@ -286,7 +287,7 @@ namespace DeltaVis
 			// Draw info text
 			using (var infoFont = new Font("Arial", 9)) {
 				var displayLessons = origLessonCount >= 0 ? origLessonCount : graphData.Count;
-				var displayEdges   = origTotalEdges  >= 0 ? origTotalEdges  : graphData.Sum(x => x.Value.Count);
+				var displayEdges = origTotalEdges >= 0 ? origTotalEdges : graphData.Sum(x => x.Value.Count);
 				var info = $"Lessons: {displayLessons} | Total Edges: {displayEdges}";
 				if (selectedVertexId >= 0) {
 					var edgeDisplay = origSelectedEdges >= 0 ? origSelectedEdges : connectedNodes.Count;

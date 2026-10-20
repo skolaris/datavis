@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Linq;
@@ -130,14 +131,26 @@ namespace DeltaVis
 		{
 			if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList)
 			{
+				// Create a set of lesson IDs to select
+				var lessonIdsToSelect = new HashSet<int>(e.RepresentedLessonIds ?? [e.VertexId]);
+
+				// Clear previous selection
+				dataGridView.ClearSelection();
+
+				// Select all rows matching the represented lesson IDs
 				for (var i = 0; i < bindingList.Count; i++)
 				{
-					if (bindingList[i].LessonId == e.VertexId)
+					if (lessonIdsToSelect.Contains(bindingList[i].LessonId))
 					{
-						dataGridView.CurrentCell = dataGridView.Rows[i].Cells[0];
 						dataGridView.Rows[i].Selected = true;
-						break;
 					}
+				}
+
+				// Scroll to the first selected row
+				if (dataGridView.SelectedRows.Count > 0)
+				{
+					var firstIndex = dataGridView.SelectedRows.Cast<DataGridViewRow>().Min(r => r.Index);
+					dataGridView.FirstDisplayedScrollingRowIndex = firstIndex;
 				}
 			}
 
