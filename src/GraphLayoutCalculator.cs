@@ -36,21 +36,23 @@ namespace DeltaVis
 
 			var centerX = panelWidth / 2f;
 			var centerY = panelHeight / 2f;
-			var maxRadiusX = Math.Max(panelWidth / 2f - Padding - vertexRadius, vertexRadius + 10);
-			var maxRadiusY = Math.Max(panelHeight / 2f - Padding - vertexRadius, vertexRadius + 10);
 			var interClusterEdges = BuildInterClusterEdges(graphData, vertexToCluster);
-			ComputeClusterCenters(centerX, centerY, maxRadiusX, maxRadiusY,
+			var gap = vertexRadius * 2f + ClusterBoundaryPadding * 2f;
+			PlaceClusters(centerX, centerY, gap,
 				out var clusterRadii, out var clusterCX, out var clusterCY);
-
-			SeparateClusters(clusterCX, clusterCY, clusterRadii, vertexRadius * 2f);
+			// Vertex circles extend vertexRadius beyond clusterRadius; cluster boundary
+			// rectangles add a further ClusterBoundaryPadding — subtract both from the
+			// available area so neither overflows the panel edge.
+			var renderMargin = vertexRadius + ClusterBoundaryPadding;
 			ScaleAndCenterLayout(clusterCX, clusterCY, clusterRadii, centerX, centerY,
-				panelWidth - 2 * Padding, panelHeight - 2 * Padding);
+				panelWidth - 2 * (Padding + renderMargin), panelHeight - 2 * (Padding + renderMargin));
 
 			for (var i = 0; i < _clusters.Count; i++) {
 				PositionClusterVertices(clusters[i], clusterCX[i], clusterCY[i], clusterRadii[i],
-					interClusterEdges, blockGroups);
+					interClusterEdges, clusterCX, clusterCY, blockGroups);
 			}
 			SeparateOverlappingVertices();
+			ClampVerticesToBounds(panelWidth, panelHeight);
 			return _vertexPositions;
 		}
 
@@ -78,20 +80,20 @@ namespace DeltaVis
 		}
 
 		/// <summary>
-		/// Sizes each cluster radius from its total vertex area and places cluster centers on a ring.
+		/// Computes cluster radii then places cluster centres using greedy circle packing:
+		/// clusters are sorted largest-first; each is placed at the position, on the contact
+		/// ring of any already-placed cluster, that minimises distance to the panel centre
+		/// with a <see cref="SpreadBias"/>-weighted tiebreaker that favours spreading away
+		/// from neighbours.  A final separation pass resolves floating-point residuals.
 		/// </summary>
-		void ComputeClusterCenters(
-			float centerX, float centerY,
-			float maxRadiusX, float maxRadiusY,
-			out float[] clusterRadii,
-			out float[] clusterCX,
-			out float[] clusterCY)
+		void PlaceClusters(
+			float targetX, float targetY, float gap,
+			out float[] clusterRadii, out float[] clusterCX, out float[] clusterCY)
 		{
 			var n = _clusters.Count;
 			clusterRadii = new float[n];
 			clusterCX = new float[n];
 			clusterCY = new float[n];
-			var ringRadius = 0.5f * Math.Max(maxRadiusX, maxRadiusY);
 
 			for (var i = 0; i < n; i++) {
 				var totalArea = _clusters[i].Sum(v => {
@@ -99,10 +101,68 @@ namespace DeltaVis
 					return r * r;
 				});
 				clusterRadii[i] = 2.4f * (float)Math.Sqrt(totalArea / Math.PI);
-				var angle = (float)i / n * 2 * (float)Math.PI;
-				clusterCX[i] = centerX + ringRadius * (float)Math.Cos(angle);
-				clusterCY[i] = centerY + ringRadius * (float)Math.Sin(angle);
 			}
+
+			if (n == 0) return;
+
+			var radii = clusterRadii; //local copy: out params cannot be captured in lambdas (CS1628)
+			var order = Enumerable.Range(0, n).OrderByDescending(i => radii[i]).ToArray();
+			var placed = new bool[n];
+
+			// Largest cluster at panel centre
+			clusterCX[order[0]] = targetX;
+			clusterCY[order[0]] = targetY;
+			placed[order[0]] = true;
+
+			const int AngleSteps = 360;
+
+			for (var k = 1; k < n; k++) {
+				var idx = order[k];
+				var rNew = clusterRadii[idx];
+				var bestX = targetX;
+				var bestY = targetY + clusterRadii[order[0]] + rNew + gap;
+				var bestScore = float.MaxValue;
+
+				for (var p = 0; p < n; p++) {
+					if (!placed[p]) continue;
+					var contactR = clusterRadii[p] + rNew + gap;
+
+					for (var step = 0; step < AngleSteps; step++) {
+						var angle = step * (2f * (float)Math.PI / AngleSteps);
+						var cx = clusterCX[p] + contactR * (float)Math.Cos(angle);
+						var cy = clusterCY[p] + contactR * (float)Math.Sin(angle);
+
+						var minDistToOthers = float.MaxValue;
+						var valid = true;
+						for (var q = 0; q < n; q++) {
+							if (!placed[q]) continue;
+							var dx = cx - clusterCX[q];
+							var dy = cy - clusterCY[q];
+							var d2 = dx * dx + dy * dy;
+							var minD = clusterRadii[q] + rNew + gap;
+							if (d2 < minD * minD - 1f) { valid = false; break; }
+							var d = (float)Math.Sqrt(d2);
+							if (d < minDistToOthers) minDistToOthers = d;
+						}
+
+						if (!valid) continue;
+
+						var distToTarget = (float)Math.Sqrt((cx - targetX) * (cx - targetX) + (cy - targetY) * (cy - targetY));
+						var score = distToTarget - minDistToOthers * SpreadBias;
+						if (score < bestScore) {
+							bestScore = score;
+							bestX = cx;
+							bestY = cy;
+						}
+					}
+				}
+
+				clusterCX[idx] = bestX;
+				clusterCY[idx] = bestY;
+				placed[idx] = true;
+			}
+
+			SeparateClusters(clusterCX, clusterCY, clusterRadii, gap);
 		}
 
 		/// <summary>
@@ -137,7 +197,9 @@ namespace DeltaVis
 		}
 
 		/// <summary>
-		/// Scales down and re-centres the cluster layout so all clusters fit within the panel.
+		/// Scales and re-centres the cluster layout to fill the available panel area.
+		/// Cluster centre positions always scale to fill the space; radii are only reduced
+		/// (never grown) so intra-cluster vertex density stays consistent.
 		/// </summary>
 		static void ScaleAndCenterLayout(
 			float[] clusterCX, float[] clusterCY, float[] clusterRadii,
@@ -154,14 +216,14 @@ namespace DeltaVis
 				maxY = Math.Max(maxY, clusterCY[i] + clusterRadii[i]);
 			}
 
-			// Scale down only — enlarging would push intra-cluster vertices apart
-			var scale = Math.Min(1f, Math.Min(availWidth / (maxX - minX), availHeight / (maxY - minY)));
+			var scale = Math.Min(availWidth / (maxX - minX), availHeight / (maxY - minY));
+			var radiusScale = Math.Min(scale, 1f); //shrink radii when compressing; keep them when expanding
 			var layoutCX = (minX + maxX) / 2f;
 			var layoutCY = (minY + maxY) / 2f;
 			for (var i = 0; i < n; i++) {
 				clusterCX[i] = centerX + (clusterCX[i] - layoutCX) * scale;
 				clusterCY[i] = centerY + (clusterCY[i] - layoutCY) * scale;
-				clusterRadii[i] *= scale;
+				clusterRadii[i] *= radiusScale;
 			}
 		}
 
@@ -173,9 +235,9 @@ namespace DeltaVis
 			List<int> cluster,
 			float clusterCenterX, float clusterCenterY, float clusterRadius,
 			Dictionary<int, Dictionary<int, int>> interClusterEdges,
+			float[] clusterCX, float[] clusterCY,
 			Dictionary<int, int> blockGroups)
 		{
-			var clusterCount = _clusters.Count;
 			var n = cluster.Count;
 			if (n == 0)
 				return;
@@ -188,9 +250,14 @@ namespace DeltaVis
 				var totalY = 0f;
 				var totalEdges = 0f;
 				foreach (var kvp in interClusterEdges[vertexId]) {
-					var targetAngle = (float)kvp.Key / clusterCount * 2 * (float)Math.PI;
-					totalX += kvp.Value * (float)Math.Cos(targetAngle);
-					totalY += kvp.Value * (float)Math.Sin(targetAngle);
+					var dx = clusterCX[kvp.Key] - clusterCenterX;
+					var dy = clusterCY[kvp.Key] - clusterCenterY;
+					var dist = (float)Math.Sqrt(dx * dx + dy * dy);
+					if (dist < 0.001f)
+						continue;
+
+					totalX += kvp.Value * dx / dist;
+					totalY += kvp.Value * dy / dist;
 					totalEdges += kvp.Value;
 				}
 				vertexAngle[vertexId] = totalEdges > 0 ? (float)Math.Atan2(totalY, totalX) : 0f;
@@ -217,18 +284,27 @@ namespace DeltaVis
 			var freeSlots = Enumerable.Range(0, n).Where(k => !slotTaken[k]).ToList();
 			var unassigned = cluster.Where(v => !assignment.ContainsKey(v)).ToList();
 			var noExternal = unassigned.Where(v => vertexStrength[v] == 0).ToList();
-			var hasExternal = unassigned.Where(v => vertexStrength[v] > 0).OrderBy(v => vertexAngle[v]).ToList();
-			var innerFree = freeSlots.OrderBy(k => disc[k].r).ToList();
-			var innerSlots = innerFree.Take(noExternal.Count).ToList();
-			var outerSlots = innerFree.Skip(noExternal.Count)
-				.OrderBy(k => (float)Math.Atan2(disc[k].y, disc[k].x))
-				.ToList();
+				var hasExternal = unassigned.Where(v => vertexStrength[v] > 0)
+					.OrderByDescending(v => vertexStrength[v]).ToList();
+				var innerFree = freeSlots.OrderBy(k => disc[k].r).ToList();
+				var innerSlots = innerFree.Take(noExternal.Count).ToList();
+				var freeOuterSlots = new HashSet<int>(innerFree.Skip(noExternal.Count));
 
-			for (var i = 0; i < noExternal.Count; i++)
-				assignment[noExternal[i]] = innerSlots[i];
+				for (var i = 0; i < noExternal.Count; i++)
+					assignment[noExternal[i]] = innerSlots[i];
 
-			for (var i = 0; i < hasExternal.Count && i < outerSlots.Count; i++)
-				assignment[hasExternal[i]] = outerSlots[i];
+				// Strongest-first greedy: each vertex claims the free outer slot whose angle
+				// most closely faces its weighted target-cluster direction.
+				foreach (var v in hasExternal) {
+					if (freeOuterSlots.Count == 0) break;
+					var targetAngle = vertexAngle[v];
+					var bestSlot = freeOuterSlots.MinBy(k => {
+						var diff = targetAngle - (float)Math.Atan2(disc[k].y, disc[k].x);
+						return Math.Abs((float)Math.IEEERemainder(diff, 2 * Math.PI));
+					});
+					assignment[v] = bestSlot;
+					freeOuterSlots.Remove(bestSlot);
+				}
 
 			foreach (var (vertexId, slot) in assignment) {
 				_vertexPositions[vertexId] = new PointF(
@@ -365,7 +441,24 @@ namespace DeltaVis
 		static float AngleDotProduct(float a, float b)
 			=> (float)(Math.Cos(a) * Math.Cos(b) + Math.Sin(a) * Math.Sin(b));
 
+		//clamps every vertex so none sit outside the panel boundary after overlap separation
+		void ClampVerticesToBounds(int panelWidth, int panelHeight)
+		{
+			foreach (var vertexId in _vertexPositions.Keys.ToList()) {
+				var pos = _vertexPositions[vertexId];
+				var r = GetWeightedRadius(vertexId);
+				var x = Math.Clamp(pos.X, Padding, panelWidth - Padding - r * 2);
+				var y = Math.Clamp(pos.Y, Padding, panelHeight - Padding - r * 2);
+				if (x != pos.X || y != pos.Y)
+					_vertexPositions[vertexId] = new PointF(x, y);
+			}
+		}
+
 		const float Padding = 30f;
+		//must match the padding used in GraphRenderer.DrawClusterBoundaries
+		const float ClusterBoundaryPadding = 15f;
+		//how much angular spread is favoured vs. proximity to centre when placing each cluster
+		const float SpreadBias = 0.5f;
 		List<List<int>> _clusters;
 		float _vertexRadius;
 		readonly Dictionary<int, PointF> _vertexPositions = [];

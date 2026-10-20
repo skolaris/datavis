@@ -11,8 +11,16 @@ namespace DeltaVis
 	/// </summary>
 	internal class GraphRenderer
 	{
-		private float vertexRadius;
-		private int maxEdgeCount;
+		//inter-cluster edges are weighted this many times more than intra-cluster edges
+		const int InterClusterWeight = 3;
+		//fraction of base color mixed into white for the least-connected vertices
+		const float PaleFloor = 0.08f;
+		//padding added around each cluster's vertex bounding box when drawing the boundary rectangle;
+		//must match GraphLayoutCalculator.ClusterBoundaryPadding
+		const float ClusterBoundaryPadding = 15f;
+
+		float vertexRadius;
+		int maxEdgeCount;
 
 		public void SetVertexRadius(float radius)
 		{
@@ -25,26 +33,58 @@ namespace DeltaVis
 		}
 
 		/// <summary>
+		/// Calculates the weighted edge score for one vertex: inter-cluster edges count
+		/// <see cref="InterClusterWeight"/> times more than intra-cluster edges.
+		/// </summary>
+		internal static int ComputeMaxWeightedScore(
+			Dictionary<int, HashSet<int>> graphData,
+			Dictionary<int, int> vertexToCluster)
+		{
+			if (graphData == null || graphData.Count == 0)
+				return 1;
+			var max = 0;
+			foreach (var kvp in graphData) {
+				var sc = vertexToCluster != null && vertexToCluster.TryGetValue(kvp.Key, out var c) ? c : -1;
+				var score = 0;
+				foreach (var t in kvp.Value) {
+					score += vertexToCluster != null && vertexToCluster.TryGetValue(t, out var tc) && tc != sc
+						? InterClusterWeight
+						: 1;
+				}
+				if (score > max)
+					max = score;
+			}
+			return Math.Max(1, max);
+		}
+
+		/// <summary>
 		/// Calculate a color based on edge count intensity.
 		/// More edges = more saturated/intense color.
 		/// Uses non-linear scaling for stronger visual differentiation.
 		/// </summary>
-		public Color GetColorByEdgeIntensity(int vertexId, Color baseColor, Dictionary<int, HashSet<int>> graphData)
+		public Color GetColorByEdgeIntensity(int vertexId, Color baseColor,
+			Dictionary<int, HashSet<int>> graphData, Dictionary<int, int> vertexToCluster)
 		{
 			if (!graphData.TryGetValue(vertexId, out var edges))
 				return baseColor;
 
-			var edgeCount = edges.Count;
-			var intensity = maxEdgeCount > 0 ? (float)edgeCount / maxEdgeCount : 0f;
+			var sc = vertexToCluster != null && vertexToCluster.TryGetValue(vertexId, out var c) ? c : -1;
+			var score = 0;
+			foreach (var t in edges) {
+				score += vertexToCluster != null && vertexToCluster.TryGetValue(t, out var tc) && tc != sc
+					? InterClusterWeight
+					: 1;
+			}
+			var intensity = maxEdgeCount > 0 ? (float)score / maxEdgeCount : 0f;
 
 			// Apply non-linear scaling (power of 1.5) for stronger contrast
 			// This makes the difference between low and high edge counts much more visible
 			intensity = (float)Math.Pow(intensity, 1.5f);
 
-			// Create a much paler version (only 15% of base color, 85% white) for low-edge vertices
-			var pale_r = (int)(255 + (baseColor.R - 255) * 0.15f);
-			var pale_g = (int)(255 + (baseColor.G - 255) * 0.15f);
-			var pale_b = (int)(255 + (baseColor.B - 255) * 0.15f);
+			// Create a paler version (only PaleFloor% of base color) for low-edge vertices
+			var pale_r = (int)(255 + (baseColor.R - 255) * PaleFloor);
+			var pale_g = (int)(255 + (baseColor.G - 255) * PaleFloor);
+			var pale_b = (int)(255 + (baseColor.B - 255) * PaleFloor);
 
 			// Interpolate between pale and base color based on computed intensity
 			var r = (int)(pale_r + (baseColor.R - pale_r) * intensity);
@@ -94,10 +134,9 @@ namespace DeltaVis
 				var clusterColor = clusterColors.TryGetValue(clusterIdx, out var cColor) ? cColor : Color.SteelBlue;
 
 				// Add padding around bounding box
-				var padding = 15f;
-				RectangleF boundingBox = new RectangleF(
-					minX - padding, minY - padding,
-					maxX - minX + 2 * padding, maxY - minY + 2 * padding
+				var boundingBox = new RectangleF(
+					minX - ClusterBoundaryPadding, minY - ClusterBoundaryPadding,
+					maxX - minX + 2 * ClusterBoundaryPadding, maxY - minY + 2 * ClusterBoundaryPadding
 				);
 
 				using (var boundaryPen = new Pen(clusterColor, 2f)) {
@@ -143,9 +182,8 @@ namespace DeltaVis
 			int origSelectedEdges = -1)
 		{
 			if (graphData == null || graphData.Count == 0) {
-				using (var font = new Font("Arial", 12)) {
-					e.Graphics.DrawString("No graph data loaded", font, Brushes.Gray, 20, 20);
-				}
+				using var font = new Font("Arial", 12);
+				e.Graphics.DrawString("No graph data loaded", font, Brushes.Gray, 20, 20);
 				return;
 			}
 
@@ -229,13 +267,13 @@ namespace DeltaVis
 					outlinePen = new Pen(Color.SeaGreen, 2f);
 				}
 				else if (isConnected) {
-					fillBrush = new SolidBrush(GetColorByEdgeIntensity(vertexId, Color.FromArgb(180, 180, 180), graphData));
+					fillBrush = new SolidBrush(GetColorByEdgeIntensity(vertexId, Color.FromArgb(180, 180, 180), graphData, vertexToCluster));
 					outlinePen = new Pen(Color.DimGray, 2f);
 				}
 				else {
 					var baseColor = moduleColors != null && moduleColors.TryGetValue(vertexId, out var modColor)
 						? modColor
-						: GetColorByEdgeIntensity(vertexId, clusterBaseColor, graphData);
+						: GetColorByEdgeIntensity(vertexId, clusterBaseColor, graphData, vertexToCluster);
 					fillBrush = new SolidBrush(baseColor);
 					outlinePen = new Pen(Color.Black, 1f);
 				}

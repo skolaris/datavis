@@ -275,7 +275,7 @@ namespace DeltaVis
 			}
 
 			renderer.SetVertexRadius(vertexRadius);
-			renderer.SetMaxEdgeCount(maxEdgeCount);
+			renderer.SetMaxEdgeCount(GraphRenderer.ComputeMaxWeightedScore(_mergedGraph ?? graphData, vertexToCluster));
 
 			var origLessonCount = graphData?.Count ?? 0;
 			var origTotalEdges  = graphData?.Sum(x => x.Value.Count) ?? 0;
