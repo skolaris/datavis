@@ -70,7 +70,7 @@ namespace DeltaVis
 			using var labelFont = new Font("Arial", 7.5f, FontStyle.Bold);
 
 			for (var clusterIdx = 0; clusterIdx < clusters.Count; clusterIdx++) {
-				List<int> cluster = clusters[clusterIdx];
+				var cluster = clusters[clusterIdx];
 				if (cluster.Count == 0)
 					continue;
 
@@ -91,13 +91,13 @@ namespace DeltaVis
 					continue;
 
 				// Draw bounding box with cluster color, semi-transparent
-				Color clusterColor = clusterColors.TryGetValue(clusterIdx, out var cColor) ? cColor : Color.SteelBlue;
+				var clusterColor = clusterColors.TryGetValue(clusterIdx, out var cColor) ? cColor : Color.SteelBlue;
 
 				// Add padding around bounding box
 				var padding = 15f;
 				RectangleF boundingBox = new RectangleF(
 					minX - padding, minY - padding,
-					(maxX - minX) + 2 * padding, (maxY - minY) + 2 * padding
+					maxX - minX + 2 * padding, maxY - minY + 2 * padding
 				);
 
 				using (var boundaryPen = new Pen(clusterColor, 2f)) {
@@ -135,7 +135,12 @@ namespace DeltaVis
 			int panelHeight,
 			bool showEdges = true,
 			Dictionary<int, Color> moduleColors = null,
-			Dictionary<int, LessonInfo> lessonInfo = null)
+			Dictionary<int, LessonInfo> lessonInfo = null,
+			Dictionary<int, int> nodeWeight = null,
+			Dictionary<int, List<int>> mergedToOriginals = null,
+			int origLessonCount = -1,
+			int origTotalEdges = -1,
+			int origSelectedEdges = -1)
 		{
 			if (graphData == null || graphData.Count == 0) {
 				using (var font = new Font("Arial", 12)) {
@@ -159,125 +164,143 @@ namespace DeltaVis
 						connectedNodes.Add(kvp.Key);
 			}
 
-			// Lessons sharing the same block as the selected vertex
+			// Lessons sharing the same block as the selected vertex (works across merged nodes too)
 			var blockMates = new HashSet<int>();
-			if (selectedVertexId >= 0 && lessonInfo != null &&
-				lessonInfo.TryGetValue(selectedVertexId, out var selInfo) && selInfo.BlockId != 0) {
-				foreach (var kvp in lessonInfo)
-					if (kvp.Key != selectedVertexId && kvp.Value.BlockId == selInfo.BlockId)
-						blockMates.Add(kvp.Key);
+			if (selectedVertexId >= 0 && lessonInfo != null) {
+				// Determine the block of the selected node (may be a merged representative)
+				var selIds = mergedToOriginals != null && mergedToOriginals.TryGetValue(selectedVertexId, out var selOriginals)
+					? selOriginals
+					: [selectedVertexId];
+				var selBlockIds = selIds
+					.Where(id => lessonInfo.TryGetValue(id, out var i) && i.BlockId != 0)
+					.Select(id => lessonInfo[id].BlockId)
+					.ToHashSet();
+
+				if (selBlockIds.Count > 0) {
+					foreach (var kvp in vertexPositions) {
+						if (kvp.Key == selectedVertexId)
+							continue;
+						var repIds = mergedToOriginals != null && mergedToOriginals.TryGetValue(kvp.Key, out var repOriginals)
+							? repOriginals
+							: [kvp.Key];
+						if (repIds.Any(id => lessonInfo.TryGetValue(id, out var i) && selBlockIds.Contains(i.BlockId)))
+							blockMates.Add(kvp.Key);
+					}
+				}
 			}
 
 			// Draw edges to/from selected vertex in light grey
 			if (showEdges && connectedNodes.Count > 0 && vertexPositions.TryGetValue(selectedVertexId, out var selPos)) {
-				var selCenter = new PointF(selPos.X + vertexRadius, selPos.Y + vertexRadius);
+				var selR = ActualRadius(selectedVertexId, nodeWeight, vertexRadius);
+				var selCenter = new PointF(selPos.X + selR, selPos.Y + selR);
 				using var edgePen = new Pen(Color.FromArgb(180, 180, 180), 1.5f);
 				foreach (var neighbourId in connectedNodes) {
 					if (!vertexPositions.TryGetValue(neighbourId, out var nPos))
 						continue;
-					var nCenter = new PointF(nPos.X + vertexRadius, nPos.Y + vertexRadius);
+					var nR = ActualRadius(neighbourId, nodeWeight, vertexRadius);
+					var nCenter = new PointF(nPos.X + nR, nPos.Y + nR);
 					e.Graphics.DrawLine(edgePen, selCenter, nCenter);
 				}
 			}
 
 			// Draw vertices
-			using (var textFont = new Font("Arial", 7, FontStyle.Bold)) {
-				foreach (var kvp in vertexPositions) {
-					var vertexId = kvp.Key;
-					PointF pos = kvp.Value;
+			foreach (var kvp in vertexPositions) {
+				var vertexId = kvp.Key;
+				var pos = kvp.Value;
+				var r = ActualRadius(vertexId, nodeWeight, vertexRadius);
+				var w = nodeWeight != null && nodeWeight.TryGetValue(vertexId, out var ww) ? ww : 1;
 
-					var isSelected = selectedVertexId == vertexId;
-					var isConnected = showEdges && connectedNodes.Contains(vertexId);
-					var isBlockMate = blockMates.Contains(vertexId);
+				var isSelected = selectedVertexId == vertexId;
+				var isConnected = showEdges && connectedNodes.Contains(vertexId);
+				var isBlockMate = blockMates.Contains(vertexId);
 
-					// Get the cluster color for this vertex
-					var clusterId = vertexToCluster.TryGetValue(vertexId, out var cId) ? cId : 0;
-					Color clusterBaseColor = clusterColors.TryGetValue(clusterId, out var cColor) ? cColor : Color.SteelBlue;
+				var clusterId = vertexToCluster.TryGetValue(vertexId, out var cId) ? cId : 0;
+				var clusterBaseColor = clusterColors.TryGetValue(clusterId, out var cColor) ? cColor : Color.SteelBlue;
 
-					Brush fillBrush;
-					Pen outlinePen;
+				Brush fillBrush;
+				Pen outlinePen;
 
-					if (isSelected) {
-						// Selected vertex: drawn bigger and black further below
-						fillBrush = new SolidBrush(clusterBaseColor);
-						outlinePen = new Pen(Color.Black, 1f);
-					}
-					else if (isBlockMate) {
-						// Same-block vertex: light green
-						fillBrush = new SolidBrush(Color.FromArgb(180, 230, 180));
-						outlinePen = new Pen(Color.SeaGreen, 2f);
-					}
-					else if (isConnected) {
-						// Neighbour vertex: light grey tint
-						Color neighbourColor = GetColorByEdgeIntensity(vertexId, Color.FromArgb(180, 180, 180), graphData);
-						fillBrush = new SolidBrush(neighbourColor);
-						outlinePen = new Pen(Color.DimGray, 2f);
-					}
-					else {
-						// Regular vertex: module color (if active) or cluster color scaled by edge intensity
-						Color baseColor = moduleColors != null && moduleColors.TryGetValue(vertexId, out var modColor)
-							? modColor
-							: GetColorByEdgeIntensity(vertexId, clusterBaseColor, graphData);
-						fillBrush = new SolidBrush(baseColor);
-						outlinePen = new Pen(Color.Black, 1f);
-					}
-
-					// Draw circle
-					if (isSelected) {
-						// Selected vertex: 1.5× size, solid black, centred on the same point
-						var selR = vertexRadius * 1.5f;
-						var selX = pos.X + vertexRadius - selR;
-						var selY = pos.Y + vertexRadius - selR;
-						e.Graphics.FillEllipse(Brushes.Black, selX, selY, selR * 2, selR * 2);
-						using (var selPen = new Pen(Color.White, 2f))
-							e.Graphics.DrawEllipse(selPen, selX, selY, selR * 2, selR * 2);
-					}
-					else {
-						e.Graphics.FillEllipse(fillBrush, pos.X, pos.Y, vertexRadius * 2, vertexRadius * 2);
-						e.Graphics.DrawEllipse(outlinePen, pos.X, pos.Y, vertexRadius * 2, vertexRadius * 2);
-					}
-
-					// Dispose brushes (except static brushes like Brushes.White)
-					if (fillBrush is SolidBrush sb)
-						sb.Dispose();
-					outlinePen.Dispose();
+				if (isSelected) {
+					fillBrush = new SolidBrush(clusterBaseColor);
+					outlinePen = new Pen(Color.Black, 1f);
 				}
+				else if (isBlockMate) {
+					fillBrush = new SolidBrush(Color.FromArgb(180, 230, 180));
+					outlinePen = new Pen(Color.SeaGreen, 2f);
+				}
+				else if (isConnected) {
+					fillBrush = new SolidBrush(GetColorByEdgeIntensity(vertexId, Color.FromArgb(180, 180, 180), graphData));
+					outlinePen = new Pen(Color.DimGray, 2f);
+				}
+				else {
+					var baseColor = moduleColors != null && moduleColors.TryGetValue(vertexId, out var modColor)
+						? modColor
+						: GetColorByEdgeIntensity(vertexId, clusterBaseColor, graphData);
+					fillBrush = new SolidBrush(baseColor);
+					outlinePen = new Pen(Color.Black, 1f);
+				}
+
+				if (isSelected) {
+					var selR = r * 1.5f;
+					var selX = pos.X + r - selR;
+					var selY = pos.Y + r - selR;
+					e.Graphics.FillEllipse(Brushes.Black, selX, selY, selR * 2, selR * 2);
+					using var selPen = new Pen(Color.White, 2f);
+					e.Graphics.DrawEllipse(selPen, selX, selY, selR * 2, selR * 2);
+				}
+				else {
+					e.Graphics.FillEllipse(fillBrush, pos.X, pos.Y, r * 2, r * 2);
+					e.Graphics.DrawEllipse(outlinePen, pos.X, pos.Y, r * 2, r * 2);
+				}
+
+				// Draw count label for merged nodes (semi-transparent, inside the circle)
+				if (w > 1) {
+					var label = w.ToString();
+					var fontSize = Math.Max(6f, Math.Min(r * 0.9f, 14f));
+					using var countFont = new Font("Arial", fontSize, FontStyle.Bold);
+					using var countBrush = new SolidBrush(Color.FromArgb(120, 0, 0, 0));
+					var textSize = e.Graphics.MeasureString(label, countFont);
+					e.Graphics.DrawString(label, countFont, countBrush,
+						pos.X + r - textSize.Width / 2,
+						pos.Y + r - textSize.Height / 2);
+				}
+
+				if (fillBrush is SolidBrush sb)
+					sb.Dispose();
+				outlinePen.Dispose();
 			}
 
-			// Draw labels on top of all vertices (second pass)
-			using (var textFont = new Font("Arial", 7, FontStyle.Bold)) {
-				foreach (var kvp in vertexPositions) {
-					var vertexId = kvp.Key;
-					PointF pos = kvp.Value;
-
-					var isSelected = selectedVertexId == vertexId;
-
-					// Draw lesson ID as text ONLY for the selected vertex
-					if (isSelected) {
-						var text = vertexId.ToString();
-						SizeF textSize = e.Graphics.MeasureString(text, textFont);
-						var textX = pos.X + vertexRadius - textSize.Width / 2;
-						var textY = pos.Y + vertexRadius - textSize.Height / 2;
-
-						// Draw white background box behind the label
-						var pad = 1f;
-						var bgRect = new RectangleF(textX - pad, textY - pad, textSize.Width + pad * 2, textSize.Height + pad * 2);
-						e.Graphics.FillRectangle(Brushes.White, bgRect);
-
-						e.Graphics.DrawString(text, textFont, Brushes.Black, textX, textY);
-					}
-				}
+			// Draw selected-vertex label on top (second pass)
+			if (selectedVertexId >= 0 && vertexPositions.TryGetValue(selectedVertexId, out var selLabelPos)) {
+				var r = ActualRadius(selectedVertexId, nodeWeight, vertexRadius);
+				var text = selectedVertexId.ToString();
+				using var textFont = new Font("Arial", 7, FontStyle.Bold);
+				var textSize = e.Graphics.MeasureString(text, textFont);
+				var textX = selLabelPos.X + r - textSize.Width / 2;
+				var textY = selLabelPos.Y + r - textSize.Height / 2;
+				var pad = 1f;
+				e.Graphics.FillRectangle(Brushes.White, textX - pad, textY - pad, textSize.Width + pad * 2, textSize.Height + pad * 2);
+				e.Graphics.DrawString(text, textFont, Brushes.Black, textX, textY);
 			}
 
 			// Draw info text
 			using (var infoFont = new Font("Arial", 9)) {
-				// Count total edges
-				var totalEdges = graphData.Sum(x => x.Value.Count);
-				var info = $"Lessons: {graphData.Count} | Total Edges: {totalEdges}";
-				if (selectedVertexId >= 0)
-					info += $" | Selected: {selectedVertexId} ({connectedNodes.Count} edges)";
+				var displayLessons = origLessonCount >= 0 ? origLessonCount : graphData.Count;
+				var displayEdges   = origTotalEdges  >= 0 ? origTotalEdges  : graphData.Sum(x => x.Value.Count);
+				var info = $"Lessons: {displayLessons} | Total Edges: {displayEdges}";
+				if (selectedVertexId >= 0) {
+					var edgeDisplay = origSelectedEdges >= 0 ? origSelectedEdges : connectedNodes.Count;
+					info += $" | Selected: {selectedVertexId} ({edgeDisplay} edges)";
+				}
 				e.Graphics.DrawString(info, infoFont, Brushes.Black, 10, panelHeight - 25);
 			}
+		}
+
+		static float ActualRadius(int vertexId, Dictionary<int, int> nodeWeight, float baseRadius)
+		{
+			if (nodeWeight != null && nodeWeight.TryGetValue(vertexId, out var w) && w > 1)
+				return baseRadius * (float)Math.Sqrt(w);
+			return baseRadius;
 		}
 	}
 }

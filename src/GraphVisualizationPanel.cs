@@ -44,6 +44,11 @@ namespace DeltaVis
 		// lessonId → blockId, set when org data is loaded
 		private Dictionary<int, int> _blockGroups;
 
+		// Merged graph (same-block identical-edge vertices collapsed into one representative)
+		private Dictionary<int, HashSet<int>> _mergedGraph;
+		private Dictionary<int, int> _nodeWeight;            // representativeId → lesson count
+		private Dictionary<int, List<int>> _mergedToOriginals; // representativeId → all lesson ids
+
 		// Phase 2 cancellation — discards stale layout tasks on resize
 		private CancellationTokenSource _layoutCts;
 
@@ -72,7 +77,10 @@ namespace DeltaVis
 			selectedVertexId = -1;
 
 			if (graphData != null && graphData.Count > 0) {
-				maxEdgeCount = graphData.Values.Max(edges => edges.Count);
+				BuildMergedGraph();
+
+				var activeGraph = _mergedGraph ?? graphData;
+				maxEdgeCount = activeGraph.Values.Max(edges => edges.Count);
 				if (maxEdgeCount == 0)
 					maxEdgeCount = 1;
 
@@ -107,8 +115,14 @@ namespace DeltaVis
 				: null;
 			_clusterCacheKey = null;
 
-			if (graphData != null && graphData.Count > 0)
+			if (graphData != null && graphData.Count > 0) {
+				BuildMergedGraph();
+				var activeGraph = _mergedGraph ?? graphData;
+				maxEdgeCount = activeGraph.Values.Max(edges => edges.Count);
+				if (maxEdgeCount == 0)
+					maxEdgeCount = 1;
 				DetectAndLayoutAsync();
+			}
 			else
 				Invalidate();
 		}
@@ -144,7 +158,7 @@ namespace DeltaVis
 		/// </summary>
 		private async void DetectAndLayoutAsync()
 		{
-			var capturedGraph = graphData;
+			var capturedGraph = _mergedGraph ?? graphData;
 
 			_isBusy = true;
 			Invalidate();
@@ -194,7 +208,7 @@ namespace DeltaVis
 			if (_cachedClusters == null || graphData == null)
 				return;
 
-			await RunLayoutAsync(graphData);
+			await RunLayoutAsync(_mergedGraph ?? graphData);
 		}
 
 		private async Task RunLayoutAsync(Dictionary<int, HashSet<int>> capturedGraph)
@@ -212,6 +226,7 @@ namespace DeltaVis
 			var capturedVertexToCluster = _cachedVertexToCluster;
 			var capturedColors = _cachedClusterColors;
 			var capturedBlockGroups = _blockGroups;
+			var capturedNodeWeight = _nodeWeight;
 			var capturedWidth = Width;
 			var capturedHeight = Height;
 			var capturedRadius = vertexRadius;
@@ -231,7 +246,8 @@ namespace DeltaVis
 						capturedRadius,
 						capturedWidth,
 						capturedHeight,
-						capturedBlockGroups);
+						capturedBlockGroups,
+						capturedNodeWeight);
 
 					token.ThrowIfCancellationRequested();
 					return localPositions;
@@ -263,9 +279,23 @@ namespace DeltaVis
 
 			renderer.SetVertexRadius(vertexRadius);
 			renderer.SetMaxEdgeCount(maxEdgeCount);
+
+			var origLessonCount = graphData?.Count ?? 0;
+			var origTotalEdges  = graphData?.Sum(x => x.Value.Count) ?? 0;
+			var origSelectedEdges = selectedVertexId >= 0 && graphData != null && graphData.TryGetValue(selectedVertexId, out var selEdges)
+				? selEdges.Count
+				: -1;
+			// For a merged representative, sum the original edge counts of all represented lessons
+			if (origSelectedEdges < 0 && selectedVertexId >= 0 &&
+				_mergedToOriginals != null && _mergedToOriginals.TryGetValue(selectedVertexId, out var origIds)) {
+				origSelectedEdges = origIds
+					.Where(id => graphData != null && graphData.ContainsKey(id))
+					.Sum(id => graphData[id].Count);
+			}
+
 			renderer.Render(
 					e,
-					graphData,
+					_mergedGraph ?? graphData,
 					clusters,
 					vertexPositions,
 					clusterColors,
@@ -275,7 +305,12 @@ namespace DeltaVis
 					Height,
 					ShowEdges,
 					ColorByModule ? _moduleColors : null,
-					_lessonTooltips
+					_lessonTooltips,
+					_nodeWeight,
+					_mergedToOriginals,
+					origLessonCount,
+					origTotalEdges,
+					origSelectedEdges
 				);
 		}
 
@@ -286,8 +321,9 @@ namespace DeltaVis
 
 			foreach (var kvp in vertexPositions) {
 				var vertexId = kvp.Key;
-				PointF pos = kvp.Value;
-				var rect = new RectangleF(pos.X, pos.Y, vertexRadius * 2, vertexRadius * 2);
+				var pos = kvp.Value;
+				var r = GetActualRadius(vertexId);
+				var rect = new RectangleF(pos.X, pos.Y, r * 2, r * 2);
 
 				if (rect.Contains(e.Location)) {
 					selectedVertexId = vertexId;
@@ -307,22 +343,30 @@ namespace DeltaVis
 				return;
 
 			foreach (var kvp in vertexPositions) {
-				var rect = new RectangleF(kvp.Value.X, kvp.Value.Y, vertexRadius * 2, vertexRadius * 2);
+				var r = GetActualRadius(kvp.Key);
+				var rect = new RectangleF(kvp.Value.X, kvp.Value.Y, r * 2, r * 2);
 				if (rect.Contains(e.Location)) {
 					if (_lastTooltipVertex == kvp.Key)
 						return;
 
 					_lastTooltipVertex = kvp.Key;
-					if (_lessonTooltips.TryGetValue(kvp.Key, out var info)) {
-						var tip = $"Lesson {kvp.Key}";
-						var detail = info.ToDetailString();
-						if (!string.IsNullOrEmpty(detail))
-							tip += "\n" + detail.Replace("   |   ", "\n");
-						_toolTip.SetToolTip(this, tip);
+
+					// Expand merged node to all represented lessons
+					var represented = _mergedToOriginals != null && _mergedToOriginals.TryGetValue(kvp.Key, out var originals)
+						? originals
+						: [kvp.Key];
+
+					var lines = new System.Text.StringBuilder();
+					foreach (var lid in represented) {
+						lines.Append($"Lesson {lid}");
+						if (_lessonTooltips.TryGetValue(lid, out var info)) {
+							var detail = info.ToDetailString();
+							if (!string.IsNullOrEmpty(detail))
+								lines.Append(": ").Append(detail.Replace("   |   ", ", "));
+						}
+						lines.AppendLine();
 					}
-					else {
-						_toolTip.SetToolTip(this, $"Lesson {kvp.Key}");
-					}
+					_toolTip.SetToolTip(this, lines.ToString().TrimEnd());
 					return;
 				}
 			}
@@ -338,6 +382,113 @@ namespace DeltaVis
 		{
 			// Skip Phase 1 — reuse cached clusters, only redo layout geometry
 			CalculateLayoutAsync();
+		}
+
+		/// <summary>
+		/// Returns the actual drawn radius for a vertex, scaled by sqrt of its node weight.
+		/// </summary>
+		private float GetActualRadius(int vertexId)
+		{
+			if (_nodeWeight != null && _nodeWeight.TryGetValue(vertexId, out var w) && w > 1)
+				return vertexRadius * (float)Math.Sqrt(w);
+			return vertexRadius;
+		}
+
+		/// <summary>
+		/// Collapses same-block vertices whose edge sets are identical into a single
+		/// representative node. Populates _mergedGraph, _nodeWeight, _mergedToOriginals.
+		/// When no merging applies the fields are set to null (callers fall back to graphData).
+		/// </summary>
+		private void BuildMergedGraph()
+		{
+			_mergedGraph = null;
+			_nodeWeight = null;
+			_mergedToOriginals = null;
+
+			if (graphData == null || _blockGroups == null)
+				return;
+
+			// Group lesson ids by block
+			var byBlock = new Dictionary<int, List<int>>();
+			foreach (var kvp in _blockGroups) {
+				if (!graphData.ContainsKey(kvp.Key))
+					continue;
+				if (!byBlock.TryGetValue(kvp.Value, out var list)) { list = []; byBlock[kvp.Value] = list; }
+				list.Add(kvp.Key);
+			}
+
+			// Find groups where ≥2 lessons share identical edge sets (normalised as sorted string key)
+			// Map: original lesson id -> representative id
+			var repOf = new Dictionary<int, int>();
+			var mergedToOriginals = new Dictionary<int, List<int>>();
+
+			foreach (var (blockId, members) in byBlock) {
+				if (members.Count < 2)
+					continue;
+
+				var memberSet = members.ToHashSet();
+
+				// Sub-group by edge signature, ignoring intra-block edges so that lessons
+				// that only differ by referencing each other still count as identical.
+				var bySig = new Dictionary<string, List<int>>();
+				foreach (var lid in members) {
+					var sig = string.Join(",", graphData[lid].Where(nb => !memberSet.Contains(nb)).OrderBy(x => x));
+					if (!bySig.TryGetValue(sig, out var g)) { g = []; bySig[sig] = g; }
+					g.Add(lid);
+				}
+
+				foreach (var group in bySig.Values) {
+					if (group.Count < 2)
+						continue;
+					var rep = group.Min(); // lowest id becomes the representative
+					mergedToOriginals[rep] = [.. group.OrderBy(x => x)];
+					foreach (var lid in group)
+						repOf[lid] = rep;
+				}
+			}
+
+			if (mergedToOriginals.Count == 0)
+				return; // nothing to merge
+
+			// Build merged graph: replace every non-representative with its representative
+			var merged = new Dictionary<int, HashSet<int>>();
+			foreach (var kvp in graphData) {
+				var lid = kvp.Key;
+				var rep = repOf.TryGetValue(lid, out var r) ? r : lid;
+				if (rep != lid)
+					continue; // skip non-representatives
+
+				if (!merged.TryGetValue(rep, out var edges)) { edges = []; merged[rep] = edges; }
+				// Remap all neighbour ids through repOf as well
+				foreach (var nb in kvp.Value) {
+					var nbRep = repOf.TryGetValue(nb, out var nr) ? nr : nb;
+					if (nbRep != rep)
+						edges.Add(nbRep);
+				}
+			}
+			// Include non-merged singletons
+			foreach (var kvp in graphData) {
+				if (repOf.TryGetValue(kvp.Key, out var r) && r != kvp.Key)
+					continue;
+				if (merged.ContainsKey(kvp.Key))
+					continue;
+				var edges = new HashSet<int>();
+				foreach (var nb in kvp.Value) {
+					var nbRep = repOf.TryGetValue(nb, out var nr) ? nr : nb;
+					if (nbRep != kvp.Key)
+						edges.Add(nbRep);
+				}
+				merged[kvp.Key] = edges;
+			}
+
+			// Build nodeWeight
+			var nodeWeight = new Dictionary<int, int>();
+			foreach (var kvp in mergedToOriginals)
+				nodeWeight[kvp.Key] = kvp.Value.Count;
+
+			_mergedGraph = merged;
+			_nodeWeight = nodeWeight;
+			_mergedToOriginals = mergedToOriginals;
 		}
 	}
 }
