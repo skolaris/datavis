@@ -11,8 +11,7 @@ namespace DeltaVis
 	{
 		private void LoadFileButton_Click(object sender, EventArgs e)
 		{
-			if (openFileDialog.ShowDialog() == DialogResult.OK)
-			{
+			if (openFileDialog.ShowDialog() == DialogResult.OK) {
 				hasDeltaData = true;
 				LoadAndDisplayData(openFileDialog.FileName);
 			}
@@ -20,17 +19,14 @@ namespace DeltaVis
 
 		private void LoadPositionsButton_Click(object sender, EventArgs e)
 		{
-			if (openFileDialog.ShowDialog() == DialogResult.OK)
-			{
+			if (openFileDialog.ShowDialog() == DialogResult.OK) {
 				positionsData = FileParser.ParsePositionsFile(openFileDialog.FileName);
 
-				if (hasDeltaData && bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0)
-				{
+				if (hasDeltaData && bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0) {
 					MergePositionsData(bindingList);
 					dataGridView.Refresh();
 				}
-				else
-				{
+				else {
 					LoadAndDisplayFromPositions();
 				}
 			}
@@ -38,12 +34,10 @@ namespace DeltaVis
 
 		private void LoadGraphButton_Click(object sender, EventArgs e)
 		{
-			if (openFileDialog.ShowDialog() == DialogResult.OK)
-			{
+			if (openFileDialog.ShowDialog() == DialogResult.OK) {
 				graphData = FileParser.ParseGraphFile(openFileDialog.FileName);
 
-				if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0)
-				{
+				if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0) {
 					MergeGraphData(bindingList);
 					dataGridView.Refresh();
 				}
@@ -54,8 +48,7 @@ namespace DeltaVis
 
 		private void LoadDataButton_Click(object sender, EventArgs e)
 		{
-			var dlg = new OpenFileDialog
-			{
+			var dlg = new OpenFileDialog {
 				Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
 				Title = "Select Organisation Data File"
 			};
@@ -63,20 +56,17 @@ namespace DeltaVis
 			if (dlg.ShowDialog() != DialogResult.OK)
 				return;
 
-			try
-			{
+			try {
 				orgData = OrgDataParser.Parse(dlg.FileName);
 
-				if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0)
-				{
+				if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0) {
 					MergeOrgData(bindingList);
 					dataGridView.Refresh();
 				}
 
 				graphPanel?.SetLessonTooltips(orgData);
 			}
-			catch (Exception ex)
-			{
+			catch (Exception ex) {
 				MessageBox.Show($"Error loading data file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
 			}
 		}
@@ -102,21 +92,25 @@ namespace DeltaVis
 
 			var ascending = true;
 			if (dataGridView.Tag is string lastSorted && lastSorted.StartsWith(columnName))
-				ascending = lastSorted.EndsWith("ASC") ? false : true;
+				ascending = !lastSorted.EndsWith("ASC");
 
-			list = columnName switch
-			{
-				"LessonId"           => ascending ? list.OrderBy(x => x.LessonId).ToList()           : list.OrderByDescending(x => x.LessonId).ToList(),
+			list = columnName switch {
+				"LessonId" => ascending ? list.OrderBy(x => x.LessonId).ToList() : list.OrderByDescending(x => x.LessonId).ToList(),
+				"OrgClassGroups" => ascending ? list.OrderBy(x => x.OrgClassGroups).ToList() : list.OrderByDescending(x => x.OrgClassGroups).ToList(),
+				"OrgModule" => ascending ? list.OrderBy(x => x.OrgModule).ToList() : list.OrderByDescending(x => x.OrgModule).ToList(),
+				"OrgLecturers" => ascending ? list.OrderBy(x => x.OrgLecturers).ToList() : list.OrderByDescending(x => x.OrgLecturers).ToList(),
+				"OrgSubGroups" => ascending ? list.OrderBy(x => x.OrgSubGroups).ToList() : list.OrderByDescending(x => x.OrgSubGroups).ToList(),
+				"OrgTeachingGroup" => ascending ? list.OrderBy(x => x.OrgTeachingGroup).ToList() : list.OrderByDescending(x => x.OrgTeachingGroup).ToList(),
 				"EvaluatedMoveCount" => ascending ? list.OrderBy(x => x.EvaluatedMoveCount).ToList() : list.OrderByDescending(x => x.EvaluatedMoveCount).ToList(),
-				"ExecutedMoveCount"  => ascending ? list.OrderBy(x => x.ExecutedMoveCount).ToList()  : list.OrderByDescending(x => x.ExecutedMoveCount).ToList(),
-				"DistinctTimeslots"  => ascending ? list.OrderBy(x => x.DistinctTimeslots).ToList()  : list.OrderByDescending(x => x.DistinctTimeslots).ToList(),
-				"EdgeCount"          => ascending ? list.OrderBy(x => x.EdgeCount).ToList()          : list.OrderByDescending(x => x.EdgeCount).ToList(),
-				"MinDelta"           => ascending ? list.OrderBy(x => x.MinDelta).ToList()           : list.OrderByDescending(x => x.MinDelta).ToList(),
-				"AvgDelta"           => ascending ? list.OrderBy(x => x.AvgDelta).ToList()           : list.OrderByDescending(x => x.AvgDelta).ToList(),
-				"MaxDelta"           => ascending ? list.OrderBy(x => x.MaxDelta).ToList()           : list.OrderByDescending(x => x.MaxDelta).ToList(),
-				"MinAdapted"         => ascending ? list.OrderBy(x => x.MinAdapted).ToList()         : list.OrderByDescending(x => x.MinAdapted).ToList(),
-				"AvgAdapted"         => ascending ? list.OrderBy(x => x.AvgAdapted).ToList()         : list.OrderByDescending(x => x.AvgAdapted).ToList(),
-				"MaxAdapted"         => ascending ? list.OrderBy(x => x.MaxAdapted).ToList()         : list.OrderByDescending(x => x.MaxAdapted).ToList(),
+				"ExecutedMoveCount" => ascending ? list.OrderBy(x => x.ExecutedMoveCount).ToList() : list.OrderByDescending(x => x.ExecutedMoveCount).ToList(),
+				"DistinctTimeslots" => ascending ? list.OrderBy(x => x.DistinctTimeslots).ToList() : list.OrderByDescending(x => x.DistinctTimeslots).ToList(),
+				"EdgeCount" => ascending ? list.OrderBy(x => x.EdgeCount).ToList() : list.OrderByDescending(x => x.EdgeCount).ToList(),
+				"MinDelta" => ascending ? list.OrderBy(x => x.MinDelta).ToList() : list.OrderByDescending(x => x.MinDelta).ToList(),
+				"AvgDelta" => ascending ? list.OrderBy(x => x.AvgDelta).ToList() : list.OrderByDescending(x => x.AvgDelta).ToList(),
+				"MaxDelta" => ascending ? list.OrderBy(x => x.MaxDelta).ToList() : list.OrderByDescending(x => x.MaxDelta).ToList(),
+				"MinAdapted" => ascending ? list.OrderBy(x => x.MinAdapted).ToList() : list.OrderByDescending(x => x.MinAdapted).ToList(),
+				"AvgAdapted" => ascending ? list.OrderBy(x => x.AvgAdapted).ToList() : list.OrderByDescending(x => x.AvgAdapted).ToList(),
+				"MaxAdapted" => ascending ? list.OrderBy(x => x.MaxAdapted).ToList() : list.OrderByDescending(x => x.MaxAdapted).ToList(),
 				_ => list
 			};
 
@@ -129,8 +123,7 @@ namespace DeltaVis
 
 		private void GraphPanel_VertexSelected(object sender, VertexSelectedEventArgs e)
 		{
-			if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList)
-			{
+			if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList) {
 				// Create a set of lesson IDs to select
 				var lessonIdsToSelect = new HashSet<int>(e.RepresentedLessonIds ?? [e.VertexId]);
 
@@ -138,17 +131,14 @@ namespace DeltaVis
 				dataGridView.ClearSelection();
 
 				// Select all rows matching the represented lesson IDs
-				for (var i = 0; i < bindingList.Count; i++)
-				{
-					if (lessonIdsToSelect.Contains(bindingList[i].LessonId))
-					{
+				for (var i = 0; i < bindingList.Count; i++) {
+					if (lessonIdsToSelect.Contains(bindingList[i].LessonId)) {
 						dataGridView.Rows[i].Selected = true;
 					}
 				}
 
 				// Scroll to the first selected row
-				if (dataGridView.SelectedRows.Count > 0)
-				{
+				if (dataGridView.SelectedRows.Count > 0) {
 					var firstIndex = dataGridView.SelectedRows.Cast<DataGridViewRow>().Min(r => r.Index);
 					dataGridView.FirstDisplayedScrollingRowIndex = firstIndex;
 				}
@@ -162,12 +152,11 @@ namespace DeltaVis
 			if (e.RowIndex < 0)
 				return;
 
-			if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList)
-			{
-				if (e.RowIndex < bindingList.Count)
-				{
+			if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList) {
+				if (e.RowIndex < bindingList.Count) {
 					var lesson = bindingList[e.RowIndex];
-					graphPanel?.HighlightVertex(lesson.LessonId);
+					var vertexId = graphPanel?.GetRepresentativeVertexId(lesson.LessonId) ?? lesson.LessonId;
+					graphPanel?.HighlightVertex(vertexId);
 					UpdateDetailPanel(lesson.LessonId);
 				}
 			}
@@ -175,7 +164,8 @@ namespace DeltaVis
 
 		private void UpdateDetailPanel(int lessonId)
 		{
-			if (detailLabel == null) return;
+			if (detailLabel == null)
+				return;
 
 			if (orgData != null && orgData.TryGetValue(lessonId, out var info))
 				detailLabel.Text = $"Lesson {lessonId}   |   {info.ToDetailString()}";
@@ -185,10 +175,8 @@ namespace DeltaVis
 
 		private void Form1_Load(object sender, EventArgs e)
 		{
-			try
-			{
-				if (Properties.Settings.Default.FormWidth > 0 && Properties.Settings.Default.FormHeight > 0)
-				{
+			try {
+				if (Properties.Settings.Default.FormWidth > 0 && Properties.Settings.Default.FormHeight > 0) {
 					Width = Properties.Settings.Default.FormWidth;
 					Height = Properties.Settings.Default.FormHeight;
 				}
@@ -199,8 +187,7 @@ namespace DeltaVis
 				if (splitContainer != null && Properties.Settings.Default.SplitterDistance > 0)
 					splitContainer.SplitterDistance = Properties.Settings.Default.SplitterDistance;
 			}
-			catch
-			{
+			catch {
 				// If settings are invalid or missing, use defaults
 			}
 		}

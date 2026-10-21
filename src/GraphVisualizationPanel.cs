@@ -19,45 +19,11 @@ namespace DeltaVis
 
 	public class GraphVisualizationPanel : Panel
 	{
-		private Dictionary<int, HashSet<int>> graphData;
-		private Dictionary<int, PointF> vertexPositions = [];
-		private Dictionary<int, int> vertexToCluster = [];
-		private List<List<int>> clusters = [];
-		private Dictionary<int, Color> clusterColors = [];
-		private int selectedVertexId = -1;
 		[System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
 		public bool ShowEdges { get; set; } = true;
+
 		[System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
 		public bool ColorByModule { get; set; } = false;
-		private readonly float vertexRadius = 10f;
-		private int maxEdgeCount = 1;
-
-		// Module colours — populated when SetLessonTooltips is called
-		private Dictionary<int, Color> _moduleColors;  // vertexId -> colour
-
-		// Phase 1 cache
-		private Dictionary<int, HashSet<int>> _clusterCacheKey;
-		private List<List<int>> _cachedClusters;
-		private Dictionary<int, int> _cachedVertexToCluster;
-		private Dictionary<int, Color> _cachedClusterColors;
-
-		// lessonId → blockId, set when org data is loaded
-		private Dictionary<int, int> _blockGroups;
-
-		// Merged graph (same-block identical-edge vertices collapsed into one representative)
-		private Dictionary<int, HashSet<int>> _mergedGraph;
-		private Dictionary<int, int> _nodeWeight;            // representativeId → lesson count
-		private Dictionary<int, List<int>> _mergedToOriginals; // representativeId → all lesson ids
-
-		// Phase 2 cancellation — discards stale layout tasks on resize
-		private CancellationTokenSource _layoutCts;
-
-		private bool _isBusy;
-
-		private readonly GraphRenderer renderer;
-		private Dictionary<int, LessonInfo> _lessonTooltips;
-		private readonly ToolTip _toolTip = new ToolTip { AutoPopDelay = 8000, InitialDelay = 400, ReshowDelay = 200 };
-		private int _lastTooltipVertex = -1;
 
 		public event EventHandler<VertexSelectedEventArgs> VertexSelected;
 
@@ -103,6 +69,24 @@ namespace DeltaVis
 			Invalidate();
 		}
 
+		/// <summary>
+		/// Gets the representative vertex ID for a given lesson ID.
+		/// If the lesson is part of a merged vertex, returns the representative ID.
+		/// Otherwise returns the lesson ID itself.
+		/// </summary>
+		public int GetRepresentativeVertexId(int lessonId)
+		{
+			// If lesson is merged, find which representative it belongs to
+			if (_mergedToOriginals != null) {
+				foreach (var kvp in _mergedToOriginals) {
+					if (kvp.Value.Contains(lessonId))
+						return kvp.Key;
+				}
+			}
+			// Otherwise it's the lesson itself (or not in the graph)
+			return lessonId;
+		}
+
 		public void SetLessonTooltips(Dictionary<int, LessonInfo> tooltips)
 		{
 			_lessonTooltips = tooltips;
@@ -127,7 +111,7 @@ namespace DeltaVis
 				Invalidate();
 		}
 
-		private void BuildModuleColors(Dictionary<int, LessonInfo> tooltips)
+		void BuildModuleColors(Dictionary<int, LessonInfo> tooltips)
 		{
 			if (tooltips == null || tooltips.Count == 0) {
 				_moduleColors = null;
@@ -156,7 +140,7 @@ namespace DeltaVis
 		/// Phase 1 + Phase 2: run cluster detection (if cache is stale) then layout.
 		/// Called when graph data changes.
 		/// </summary>
-		private async void DetectAndLayoutAsync()
+		async void DetectAndLayoutAsync()
 		{
 			var capturedGraph = _mergedGraph ?? graphData;
 
@@ -181,6 +165,10 @@ namespace DeltaVis
 						return (localClusters, localVertexToCluster, localColors);
 					});
 
+					// Discard if the active graph changed while Phase 1 was running
+					if (!ReferenceEquals(_mergedGraph ?? graphData, capturedGraph))
+						return;
+
 					// Swap cache on the UI thread
 					_clusterCacheKey = capturedGraph;
 					_cachedClusters = newClusters;
@@ -202,7 +190,7 @@ namespace DeltaVis
 		/// Phase 2 only: recompute vertex positions using the cached cluster data.
 		/// Called on resize (cluster data is unchanged).
 		/// </summary>
-		private async void CalculateLayoutAsync()
+		async void CalculateLayoutAsync()
 		{
 			// Nothing to do if the cluster cache hasn't been built yet
 			if (_cachedClusters == null || graphData == null)
@@ -211,7 +199,7 @@ namespace DeltaVis
 			await RunLayoutAsync(_mergedGraph ?? graphData);
 		}
 
-		private async Task RunLayoutAsync(Dictionary<int, HashSet<int>> capturedGraph)
+		async Task RunLayoutAsync(Dictionary<int, HashSet<int>> capturedGraph)
 		{
 			// Cancel any layout already in flight
 			_layoutCts?.Cancel();
@@ -278,7 +266,7 @@ namespace DeltaVis
 			renderer.SetMaxEdgeCount(GraphRenderer.ComputeMaxWeightedScore(_mergedGraph ?? graphData, vertexToCluster));
 
 			var origLessonCount = graphData?.Count ?? 0;
-			var origTotalEdges  = graphData?.Sum(x => x.Value.Count) ?? 0;
+			var origTotalEdges = graphData?.Sum(x => x.Value.Count) ?? 0;
 			var origSelectedEdges = selectedVertexId >= 0 && graphData != null && graphData.TryGetValue(selectedVertexId, out var selEdges)
 				? selEdges.Count
 				: -1;
@@ -291,27 +279,27 @@ namespace DeltaVis
 			}
 
 			renderer.Render(
-					e,
-					_mergedGraph ?? graphData,
-					clusters,
-					vertexPositions,
-					clusterColors,
-					vertexToCluster,
-					selectedVertexId,
-					Width,
-					Height,
-					ShowEdges,
-					ColorByModule ? _moduleColors : null,
-					_lessonTooltips,
-					_nodeWeight,
-					_mergedToOriginals,
-					origLessonCount,
-					origTotalEdges,
-					origSelectedEdges
-				);
+				e,
+				_mergedGraph ?? graphData,
+				clusters,
+				vertexPositions,
+				clusterColors,
+				vertexToCluster,
+				selectedVertexId,
+				Width,
+				Height,
+				ShowEdges,
+				ColorByModule ? _moduleColors : null,
+				_lessonTooltips,
+				_nodeWeight,
+				_mergedToOriginals,
+				origLessonCount,
+				origTotalEdges,
+				origSelectedEdges
+			);
 		}
 
-		private void GraphVisualizationPanel_MouseClick(object sender, MouseEventArgs e)
+		void GraphVisualizationPanel_MouseClick(object sender, MouseEventArgs e)
 		{
 			if (_isBusy)
 				return;
@@ -337,7 +325,7 @@ namespace DeltaVis
 			Invalidate();
 		}
 
-		private void GraphVisualizationPanel_MouseMove(object sender, MouseEventArgs e)
+		void GraphVisualizationPanel_MouseMove(object sender, MouseEventArgs e)
 		{
 			if (_isBusy || _lessonTooltips == null)
 				return;
@@ -378,7 +366,7 @@ namespace DeltaVis
 			}
 		}
 
-		private void GraphVisualizationPanel_Resize(object sender, EventArgs e)
+		void GraphVisualizationPanel_Resize(object sender, EventArgs e)
 		{
 			// Skip Phase 1 — reuse cached clusters, only redo layout geometry
 			CalculateLayoutAsync();
@@ -387,7 +375,7 @@ namespace DeltaVis
 		/// <summary>
 		/// Returns the actual drawn radius for a vertex, scaled by sqrt of its node weight.
 		/// </summary>
-		private float GetActualRadius(int vertexId)
+		float GetActualRadius(int vertexId)
 		{
 			if (_nodeWeight != null && _nodeWeight.TryGetValue(vertexId, out var w) && w > 1)
 				return vertexRadius * (float)Math.Sqrt(w);
@@ -399,7 +387,7 @@ namespace DeltaVis
 		/// representative node. Populates _mergedGraph, _nodeWeight, _mergedToOriginals.
 		/// When no merging applies the fields are set to null (callers fall back to graphData).
 		/// </summary>
-		private void BuildMergedGraph()
+		void BuildMergedGraph()
 		{
 			_mergedGraph = null;
 			_nodeWeight = null;
@@ -413,7 +401,11 @@ namespace DeltaVis
 			foreach (var kvp in _blockGroups) {
 				if (!graphData.ContainsKey(kvp.Key))
 					continue;
-				if (!byBlock.TryGetValue(kvp.Value, out var list)) { list = []; byBlock[kvp.Value] = list; }
+
+				if (!byBlock.TryGetValue(kvp.Value, out var list)) {
+					list = [];
+					byBlock[kvp.Value] = list;
+				}
 				list.Add(kvp.Key);
 			}
 
@@ -432,14 +424,19 @@ namespace DeltaVis
 				// that only differ by referencing each other still count as identical.
 				var bySig = new Dictionary<string, List<int>>();
 				foreach (var lid in members) {
-					var sig = string.Join(",", graphData[lid].Where(nb => !memberSet.Contains(nb)).OrderBy(x => x));
-					if (!bySig.TryGetValue(sig, out var g)) { g = []; bySig[sig] = g; }
+					var edges = graphData[lid];
+					var key = string.Join(",", edges.Where(nb => !memberSet.Contains(nb)).OrderBy(x => x));
+					if (!bySig.TryGetValue(key, out var g)) {
+						g = [];
+						bySig[key] = g;
+					}
 					g.Add(lid);
 				}
 
 				foreach (var group in bySig.Values) {
 					if (group.Count < 2)
 						continue;
+
 					var rep = group.Min(); // lowest id becomes the representative
 					mergedToOriginals[rep] = [.. group.OrderBy(x => x)];
 					foreach (var lid in group)
@@ -490,5 +487,42 @@ namespace DeltaVis
 			_nodeWeight = nodeWeight;
 			_mergedToOriginals = mergedToOriginals;
 		}
+
+		Dictionary<int, HashSet<int>> graphData;
+		Dictionary<int, PointF> vertexPositions = [];
+		Dictionary<int, int> vertexToCluster = [];
+		List<List<int>> clusters = [];
+		Dictionary<int, Color> clusterColors = [];
+		int selectedVertexId = -1;
+
+		readonly float vertexRadius = 10f;
+		int maxEdgeCount = 1;
+
+		// Module colours — populated when SetLessonTooltips is called
+		Dictionary<int, Color> _moduleColors;  // vertexId -> colour
+
+		// Phase 1 cache
+		Dictionary<int, HashSet<int>> _clusterCacheKey;
+		List<List<int>> _cachedClusters;
+		Dictionary<int, int> _cachedVertexToCluster;
+		Dictionary<int, Color> _cachedClusterColors;
+
+		// lessonId → blockId, set when org data is loaded
+		Dictionary<int, int> _blockGroups;
+
+		// Merged graph (same-block identical-edge vertices collapsed into one representative)
+		Dictionary<int, HashSet<int>> _mergedGraph;
+		Dictionary<int, int> _nodeWeight;            // representativeId → lesson count
+		Dictionary<int, List<int>> _mergedToOriginals; // representativeId → all lesson ids
+
+		// Phase 2 cancellation — discards stale layout tasks on resize
+		CancellationTokenSource _layoutCts;
+
+		bool _isBusy;
+
+		readonly GraphRenderer renderer;
+		Dictionary<int, LessonInfo> _lessonTooltips;
+		readonly ToolTip _toolTip = new ToolTip { AutoPopDelay = 8000, InitialDelay = 400, ReshowDelay = 200 };
+		int _lastTooltipVertex = -1;
 	}
 }

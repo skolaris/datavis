@@ -102,7 +102,8 @@ namespace DeltaVis
 			List<List<int>> clusters,
 			Dictionary<int, PointF> vertexPositions,
 			Dictionary<int, Color> clusterColors,
-			Dictionary<int, LessonInfo> lessonInfo = null)
+			Dictionary<int, LessonInfo> lessonInfo = null,
+			Dictionary<int, int> nodeWeight = null)
 		{
 			if (clusters == null || clusters.Count == 0)
 				return;
@@ -120,10 +121,13 @@ namespace DeltaVis
 
 				foreach (var vertexId in cluster) {
 					if (vertexPositions.TryGetValue(vertexId, out var pos)) {
+						var r = vertexRadius;
+						if (nodeWeight != null && nodeWeight.TryGetValue(vertexId, out var w) && w > 1)
+							r = vertexRadius * (float)Math.Sqrt(w);
 						minX = Math.Min(minX, pos.X);
-						maxX = Math.Max(maxX, pos.X + vertexRadius * 2);
+						maxX = Math.Max(maxX, pos.X + r * 2);
 						minY = Math.Min(minY, pos.Y);
-						maxY = Math.Max(maxY, pos.Y + vertexRadius * 2);
+						maxY = Math.Max(maxY, pos.Y + r * 2);
 					}
 				}
 
@@ -188,18 +192,19 @@ namespace DeltaVis
 			}
 
 			// Draw cluster boundaries first (background layer)
-			DrawClusterBoundaries(e, clusters, vertexPositions, clusterColors, lessonInfo);
+			DrawClusterBoundaries(e, clusters, vertexPositions, clusterColors, lessonInfo, nodeWeight);
 
 			// Get all neighbours of the selected vertex (both directions)
 			var connectedNodes = new HashSet<int>();
 			if (selectedVertexId >= 0) {
-				if (graphData.TryGetValue(selectedVertexId, out var outEdges))
+				if (graphData.TryGetValue(selectedVertexId, out var outEdges)) {
 					foreach (var id in outEdges)
 						connectedNodes.Add(id);
-
-				foreach (var kvp in graphData)
+				}
+				foreach (var kvp in graphData) {
 					if (kvp.Key != selectedVertexId && kvp.Value.Contains(selectedVertexId))
 						connectedNodes.Add(kvp.Key);
+				}
 			}
 
 			// Lessons sharing the same block as the selected vertex (works across merged nodes too)
@@ -209,6 +214,7 @@ namespace DeltaVis
 				var selIds = mergedToOriginals != null && mergedToOriginals.TryGetValue(selectedVertexId, out var selOriginals)
 					? selOriginals
 					: [selectedVertexId];
+
 				var selBlockIds = selIds
 					.Where(id => lessonInfo.TryGetValue(id, out var i) && i.BlockId != 0)
 					.Select(id => lessonInfo[id].BlockId)
@@ -218,6 +224,7 @@ namespace DeltaVis
 					foreach (var kvp in vertexPositions) {
 						if (kvp.Key == selectedVertexId)
 							continue;
+
 						var repIds = mergedToOriginals != null && mergedToOriginals.TryGetValue(kvp.Key, out var repOriginals)
 							? repOriginals
 							: [kvp.Key];
@@ -235,6 +242,7 @@ namespace DeltaVis
 				foreach (var neighbourId in connectedNodes) {
 					if (!vertexPositions.TryGetValue(neighbourId, out var nPos))
 						continue;
+
 					var nR = ActualRadius(neighbourId, nodeWeight, vertexRadius);
 					var nCenter = new PointF(nPos.X + nR, nPos.Y + nR);
 					e.Graphics.DrawLine(edgePen, selCenter, nCenter);
@@ -306,6 +314,7 @@ namespace DeltaVis
 
 				if (fillBrush is SolidBrush sb)
 					sb.Dispose();
+
 				outlinePen.Dispose();
 			}
 
@@ -323,22 +332,22 @@ namespace DeltaVis
 			}
 
 			// Draw info text
-			using (var infoFont = new Font("Arial", 9)) {
-				var displayLessons = origLessonCount >= 0 ? origLessonCount : graphData.Count;
-				var displayEdges = origTotalEdges >= 0 ? origTotalEdges : graphData.Sum(x => x.Value.Count);
-				var info = $"Lessons: {displayLessons} | Total Edges: {displayEdges}";
-				if (selectedVertexId >= 0) {
-					var edgeDisplay = origSelectedEdges >= 0 ? origSelectedEdges : connectedNodes.Count;
-					info += $" | Selected: {selectedVertexId} ({edgeDisplay} edges)";
-				}
-				e.Graphics.DrawString(info, infoFont, Brushes.Black, 10, panelHeight - 25);
+			using var infoFont = new Font("Arial", 9);
+			var displayLessons = origLessonCount >= 0 ? origLessonCount : graphData.Count;
+			var displayEdges = origTotalEdges >= 0 ? origTotalEdges : graphData.Sum(x => x.Value.Count);
+			var info = $"Lessons: {displayLessons} | Total Edges: {displayEdges}";
+			if (selectedVertexId >= 0) {
+				var edgeDisplay = origSelectedEdges >= 0 ? origSelectedEdges : connectedNodes.Count;
+				info += $" | Selected: {selectedVertexId} ({edgeDisplay} edges)";
 			}
+			e.Graphics.DrawString(info, infoFont, Brushes.Black, 10, panelHeight - 25);
 		}
 
 		static float ActualRadius(int vertexId, Dictionary<int, int> nodeWeight, float baseRadius)
 		{
 			if (nodeWeight != null && nodeWeight.TryGetValue(vertexId, out var w) && w > 1)
 				return baseRadius * (float)Math.Sqrt(w);
+
 			return baseRadius;
 		}
 	}

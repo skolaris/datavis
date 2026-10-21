@@ -95,29 +95,28 @@ namespace DeltaVis
 			var graph = new Dictionary<int, HashSet<int>>();
 
 			try {
-				using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-				using (var reader = new StreamReader(stream)) {
-					string line;
-					var currentLessonId = -1;
-					var lessonHeaderPattern = new Regex(@"Lesson\s+(\d+):\s*(\d+)\s+edges:");
+				using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+				using var reader = new StreamReader(stream);
+				string line;
+				var currentLessonId = -1;
+				var lessonHeaderPattern = new Regex(@"Lesson\s+(\d+):\s*(\d+)\s+edges:");
 
-					while ((line = reader.ReadLine()) != null) {
-						var lessonMatch = lessonHeaderPattern.Match(line);
-						if (lessonMatch.Success) {
-							currentLessonId = int.Parse(lessonMatch.Groups[1].Value);
-							if (!graph.ContainsKey(currentLessonId))
-								graph[currentLessonId] = [];
-							continue;
-						}
+				while ((line = reader.ReadLine()) != null) {
+					var lessonMatch = lessonHeaderPattern.Match(line);
+					if (lessonMatch.Success) {
+						currentLessonId = int.Parse(lessonMatch.Groups[1].Value);
+						if (!graph.ContainsKey(currentLessonId))
+							graph[currentLessonId] = [];
+						continue;
+					}
 
-						if (string.IsNullOrWhiteSpace(line))
-							continue;
+					if (string.IsNullOrWhiteSpace(line))
+						continue;
 
-						if (currentLessonId != -1) {
-							var cleaned = line.Replace("\0", "").Replace("\t", "").Trim();
-							if (int.TryParse(cleaned, out var edgeLessonId))
-								graph[currentLessonId].Add(edgeLessonId);
-						}
+					if (currentLessonId != -1) {
+						var cleaned = line.Replace("\0", "").Replace("\t", "").Trim();
+						if (int.TryParse(cleaned, out var edgeLessonId))
+							graph[currentLessonId].Add(edgeLessonId);
 					}
 				}
 			}
