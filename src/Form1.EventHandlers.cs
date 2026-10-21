@@ -63,6 +63,26 @@ namespace DeltaVis
 					MergeOrgData(bindingList);
 					dataGridView.Refresh();
 				}
+				else if (orgData != null && orgData.Count > 0) {
+					// If no table exists yet, create one from org data
+					var stats = orgData
+						.OrderBy(kvp => kvp.Key)
+						.Select((kvp, index) => new LessonStatistics {
+							RowNum = index + 1,
+							LessonId = kvp.Key,
+							OrgLecturers = kvp.Value.Lecturers,
+							OrgModule = kvp.Value.Module,
+							OrgTeachingGroup = kvp.Value.TeachingGroup,
+							OrgSubGroups = kvp.Value.SubGroups,
+							OrgClassGroups = kvp.Value.ClassGroups
+						})
+						.ToList();
+
+					var bindingList2 = new BindingList<LessonStatistics>(stats);
+					MergeGraphData(bindingList2);
+					bindingSource = new BindingSource { DataSource = bindingList2 };
+					dataGridView.DataSource = bindingSource;
+				}
 
 				graphPanel?.SetLessonTooltips(orgData);
 			}
