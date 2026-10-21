@@ -26,6 +26,7 @@ namespace DeltaVis
 		public bool ColorByModule { get; set; } = false;
 
 		public event EventHandler<VertexSelectedEventArgs> VertexSelected;
+		public event EventHandler LayoutComplete;
 
 		public GraphVisualizationPanel()
 		{
@@ -86,6 +87,11 @@ namespace DeltaVis
 			// Otherwise it's the lesson itself (or not in the graph)
 			return lessonId;
 		}
+
+		public List<List<int>> CachedClusters => clusters;
+		public Dictionary<int, int> CachedVertexToCluster => vertexToCluster;
+		public Dictionary<int, Color> CachedClusterColors => clusterColors;
+		public Dictionary<int, List<int>> MergedToOriginals => _mergedToOriginals;
 
 		public void SetLessonTooltips(Dictionary<int, LessonInfo> tooltips)
 		{
@@ -250,6 +256,7 @@ namespace DeltaVis
 			clusterColors = capturedColors;
 			_isBusy = false;
 			Invalidate();
+			LayoutComplete?.Invoke(this, EventArgs.Empty);
 		}
 
 		protected override void OnPaint(PaintEventArgs e)

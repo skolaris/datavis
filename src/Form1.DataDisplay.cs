@@ -23,6 +23,7 @@ namespace DeltaVis
 				MergeOrgData(bindingList);
 				bindingSource = new BindingSource { DataSource = bindingList };
 				dataGridView.DataSource = bindingSource;
+				RefreshScatterPlotStats();
 			}
 			catch (Exception ex)
 			{
@@ -64,6 +65,7 @@ namespace DeltaVis
 				bindingSource = new BindingSource { DataSource = bindingList };
 				dataGridView.DataSource = bindingSource;
 				hasDeltaData = false;
+				RefreshScatterPlotStats();
 			}
 			catch (Exception ex)
 			{
@@ -118,6 +120,7 @@ namespace DeltaVis
 					stat.OrgClassGroups   = info.ClassGroups;
 				}
 			}
+			scatterPanel?.SetLessonTooltips(orgData);
 		}
 	}
 }

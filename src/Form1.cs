@@ -150,7 +150,9 @@ namespace DeltaVis
 				BorderStyle = BorderStyle.FixedSingle
 			};
 			graphPanel.VertexSelected += GraphPanel_VertexSelected;
+			graphPanel.LayoutComplete += GraphPanel_LayoutComplete;
 			rightLayout.Controls.Add(graphPanel, 0, 1);
+			InitializeScatterPlotPanel(graphControlBar, rightLayout);
 
 			// Detail label
 			detailLabel = new Label {

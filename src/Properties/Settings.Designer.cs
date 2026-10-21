@@ -101,5 +101,20 @@ namespace DeltaVis.Properties
 				this["SplitterDistance"] = value;
 			}
 		}
+
+		[global::System.Configuration.UserScopedSettingAttribute()]
+		[global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+		[global::System.Configuration.DefaultSettingValueAttribute("0")]
+		public int SelectedGraphView
+		{
+			get
+			{
+				return ((int)(this["SelectedGraphView"]));
+			}
+			set
+			{
+				this["SelectedGraphView"] = value;
+			}
+		}
 	}
 }

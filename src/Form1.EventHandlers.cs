@@ -25,6 +25,7 @@ namespace DeltaVis
 				if (hasDeltaData && bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0) {
 					MergePositionsData(bindingList);
 					dataGridView.Refresh();
+					RefreshScatterPlotStats();
 				}
 				else {
 					LoadAndDisplayFromPositions();
@@ -40,6 +41,7 @@ namespace DeltaVis
 				if (bindingSource?.DataSource is BindingList<LessonStatistics> bindingList && bindingList.Count > 0) {
 					MergeGraphData(bindingList);
 					dataGridView.Refresh();
+					RefreshScatterPlotStats();
 				}
 
 				graphPanel?.SetGraphData(graphData);
@@ -85,6 +87,8 @@ namespace DeltaVis
 				}
 
 				graphPanel?.SetLessonTooltips(orgData);
+				scatterPanel?.SetLessonTooltips(orgData);
+				RefreshScatterPlotStats();
 			}
 			catch (Exception ex) {
 				MessageBox.Show($"Error loading data file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -165,6 +169,7 @@ namespace DeltaVis
 			}
 
 			UpdateDetailPanel(e.VertexId);
+			scatterPanel?.HighlightVertex(e.VertexId);
 		}
 
 		private void DataGridView_CellClick(object sender, DataGridViewCellEventArgs e)
@@ -177,6 +182,7 @@ namespace DeltaVis
 					var lesson = bindingList[e.RowIndex];
 					var vertexId = graphPanel?.GetRepresentativeVertexId(lesson.LessonId) ?? lesson.LessonId;
 					graphPanel?.HighlightVertex(vertexId);
+					scatterPanel?.HighlightVertex(vertexId);
 					UpdateDetailPanel(lesson.LessonId);
 				}
 			}
@@ -206,6 +212,9 @@ namespace DeltaVis
 
 				if (splitContainer != null && Properties.Settings.Default.SplitterDistance > 0)
 					splitContainer.SplitterDistance = Properties.Settings.Default.SplitterDistance;
+
+				if (graphViewDropdown != null)
+					graphViewDropdown.SelectedIndex = Math.Clamp(Properties.Settings.Default.SelectedGraphView, 0, graphViewDropdown.Items.Count - 1);
 			}
 			catch {
 				// If settings are invalid or missing, use defaults
@@ -221,6 +230,9 @@ namespace DeltaVis
 
 			if (splitContainer != null)
 				Properties.Settings.Default.SplitterDistance = splitContainer.SplitterDistance;
+
+			if (graphViewDropdown != null)
+				Properties.Settings.Default.SelectedGraphView = graphViewDropdown.SelectedIndex;
 
 			Properties.Settings.Default.Save();
 		}
